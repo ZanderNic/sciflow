@@ -14,5 +14,5 @@ setup(
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.9",   # testet on 3.10.12 and 3.9.20    
+    python_requires=">=3.9",
 )
