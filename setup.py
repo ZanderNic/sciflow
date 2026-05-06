@@ -5,7 +5,7 @@ from pathlib import Path
 requirements = Path("requirements.txt").read_text().splitlines()
 
 setup(
-    name="HighDim",                         
+    name="sciflow",                         
     version="0.0.1",                           
     packages=find_packages(where="src"),     
     package_dir={"": "src"},                   
