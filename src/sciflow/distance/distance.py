@@ -1,8 +1,13 @@
 # std lib imports
+import warnings
+
 
 # 3-party import
 import numpy as np
 import scipy
+from tqdm import tqdm
+from sklearn.metrics.pairwise import cosine_distances
+
 
 # projekt imports
 
@@ -24,8 +29,11 @@ class BaseDistance:
 
 
     def pairwise(self, X):
-        if scipy.sparse.issparse(X) and self.supports_sparse:
-            return self.pairwise_sparse(X)
+        if scipy.sparse.issparse(X):
+            if self.supports_sparse:
+                return self.pairwise_sparse(X)
+
+            X = X.toarray()
 
         return self.pairwise_dense(X)
 
@@ -42,7 +50,7 @@ class BaseDistance:
         
         dist_array = np.zeros(shape=[X.shape[0], X.shape[0]], dtype=np.float32)
         
-        for i in range(X.shape[0]):
+        for i in tqdm(range(X.shape[0]), desc=self.name):
             for j in range(i + 1, X.shape[0]):
                 dist = self.distance(X[i, :], X[j, :])
                 
@@ -135,9 +143,7 @@ class CosineDistance(BaseDistance):
         X = np.asarray(X, dtype=np.float32)
 
         norms = np.linalg.norm(X, axis=1)
-
         norms[norms == 0] = 1.0
-
         X_norm = X / norms[:, None]
 
         similarity = X_norm @ X_norm.T
@@ -146,28 +152,12 @@ class CosineDistance(BaseDistance):
 
 
     def pairwise_sparse(self, X):
-        X = X.tocsr().astype(np.float32)
-
-        norms = np.sqrt(
-            np.asarray(
-                X.multiply(X).sum(axis=1)
-            )
-        ).ravel()
-
-        norms[norms == 0] = 1.0
-
-        X_norm = X.multiply(
-            1.0 / norms[:, None]
-        )
-
-        similarity = X_norm @ X_norm.T
-
-        return 1.0 - similarity.toarray()
-
+        return cosine_distances(X)
 
 
 class CorrelationDistance(BaseDistance):
     name = "CorrelationDistance"
+    
     def distance(self, x: np.typing.ArrayLike, y: np.typing.ArrayLike) -> float:
         x = np.asarray(x)
         y = np.asarray(y)
@@ -184,91 +174,3 @@ class CorrelationDistance(BaseDistance):
         correlation = numerator / denominator
 
         return float(1.0 - correlation)
-
-
-    def pairwise_dense(self, X: np.typing.ArrayLike) -> np.array:
-        X = np.asarray(X, dtype=float)
-
-        X_centered = X - X.mean(axis=1, keepdims=True)
-
-        norms = np.linalg.norm(X_centered, axis=1)
-        norms[norms == 0] = 1.0
-
-        X_norm = X_centered / norms[:, None]
-
-        correlation = X_norm @ X_norm.T
-
-        return 1.0 - correlation
-
-
-class KendallTauDistance(BaseDistance):
-    """
-        Distance based on Kendall Tau correlation with measures the ranking diverence betwen x and y
-
-        distance = 1 - tau
-
-        Range:
-            0   -> identical ranking
-            2   -> completely reversed ranking
-    """
-    name = "KendallTauDistance"
-    def distance(self, x: np.typing.ArrayLike, y: np.typing.ArrayLike) -> float:
-        x = np.asarray(x)
-        y = np.asarray(y)
-
-        tau, _ = scipy.stats.kendalltau(x, y)
-
-        if np.isnan(tau):
-            return 1.0
-
-        return float(1.0 - tau)
-
-
-class DistortionDistance(BaseDistance):
-    """
-        Weighted combination of:
-            - Manhattan (L1) distance
-            - Kendall Tau distance (ranking based)
-    """
-    name = "DistortionDistance"
-
-    def __init__(
-        self,
-        weights: tuple[float, float] = (0.5, 0.5),
-        normalize: bool = True
-    ):
-        if len(weights) != 2 or not np.isclose(sum(weights), 1.0):
-            raise ValueError("weights must sum to 1.")
-
-        self.weights = weights
-        self.normalize = normalize
-
-        self.l1_distance = ManhattanDistance()
-        self.kendall_distance = KendallTauDistance()
-
-    def _l1_normalize(self, x: np.ndarray) -> np.ndarray:
-        norm = np.sum(np.abs(x))
-
-        if norm == 0:
-            return x
-
-        return x / norm
-
-    def distance(self, x: np.typing.ArrayLike, y: np.typing.ArrayLike) -> float:
-        x = np.asarray(x, dtype=float)
-        y = np.asarray(y, dtype=float)
-
-        if x.shape != y.shape:
-            raise ValueError("x and y must have the same shape.")
-
-        if self.normalize:
-            x = self._l1_normalize(x)
-            y = self._l1_normalize(y)
-
-        l1 = self.l1_distance(x, y)
-        kendall = self.kendall_distance(x, y)
-
-        return float(
-            self.weights[0] * l1 +
-            self.weights[1] * kendall
-        )

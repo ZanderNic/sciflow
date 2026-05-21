@@ -72,18 +72,11 @@ class LabeledSparseMatrix:
         return matrix
 
     @property
-    def matrix(self):
+    def matrix(self) -> pd.DataFrame:
         matrix = self.matrix_sparse
 
-        row_names = self._get_labels(
-            info=self.row_info,
-            label=self.row_label,
-        )
-
-        col_names = self._get_labels(
-            info=self.col_info,
-            label=self.col_label,
-        )
+        row_names = self._get_labels(info=self.row_info, label=self.row_label)
+        col_names = self._get_labels(info=self.col_info,label=self.col_label)
 
         return pd.DataFrame(
             matrix.toarray(),
@@ -135,13 +128,34 @@ class LabeledSparseMatrix:
     @property
     def T(self):
         return LabeledSparseMatrix(
-            matrix=self.matrix_sparse.T.tocsr(),
+            matrix=self.matrix_sparse.T,
             row_info=self.col_info,
             col_info=self.row_info,
             name=f"{self.name}_T" if self.name is not None else None,
             row_label=self.col_label,
             col_label=self.row_label,
         )
+
+
+    def row_density(self):
+        nnz_per_row = self.matrix_sparse.getnnz(axis=1)
+
+        return nnz_per_row / self.n_cols
+
+
+    def col_density(self):
+            nnz_per_col = self.matrix_sparse.getnnz(axis=0)
+
+            return nnz_per_col / self.n_rows
+    
+    
+    def max_row_density(self):
+        return np.max(self.row_density())
+
+
+    def max_col_density(self):
+        return np.max(self.col_density())
+
 
     # selecting rows and cloumns #
     
@@ -154,10 +168,10 @@ class LabeledSparseMatrix:
         """
             A method that will be used to select rows or columns by filtering trough the col and row info 
             
-            info ()
+            info (pd.DataFrame):
+                info about col
             filters (dict):
         """
-        # time = 4
         mask = np.ones(len(info), dtype=bool) & starting_mask
         
         for key, value in filters.items():
@@ -276,6 +290,10 @@ class LabeledSparseMatrix:
     
     
     def _get_labels(self, info, label):
+        """
+            returns the sa
+        """    
+    
         if info is None:
             return None
         if label is None:
@@ -301,7 +319,22 @@ class LabeledSparseMatrix:
         )
     
     def head(self, n=5):
-        return self.matrix.iloc[:n, :n]
+        row_idx = self._row_idx[:n]
+        col_idx = self._col_idx[:n]
+
+        matrix = self._matrix[row_idx, :][:, col_idx]
+
+        row_info = self._row_info.iloc[row_idx]
+        col_info = self._col_info.iloc[col_idx]
+
+        row_names = self._get_labels(info=row_info, label=self.row_label)
+        col_names = self._get_labels(info=col_info, label=self.col_label)
+
+        return pd.DataFrame(
+            matrix.toarray(),
+            index=row_names,
+            columns=col_names,
+        )
     
     
     def __getitem__(self, key):

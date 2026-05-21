@@ -161,26 +161,29 @@ class ScifateDataset(Dataset):
     
     def create_distance_matrix(
         self,
-        entity: str= "cell",                                    # "cell" | "gene" | "trajectory"
-        data: str= "expression",                                # "expression" | "ntr"
+        matrix: LabeledSparseMatrix | LabeledDistanceMatrix = None,
+        entity: str = "cell",                                                # "cell" | "gene" | "trajectory"
+        data: str= "expression",                                             # "expression" | "ntr"
         distance: BaseDistance = None,
-        save: bool = True
-        
+        save: bool = True,
+        reduction: str = None,
     ) -> LabeledDistanceMatrix:
         
         if distance is None:
             distance = CosineDistance()
 
         if entity not in ["cell", "gene", "trajectory"]:
-            raise ValueError("entity must be 'cell', 'gene', or 'trajectory'.")
+                raise ValueError("entity must be 'cell', 'gene', or 'trajectory'.")
 
         if data not in ["expression", "ntr"]:
             raise ValueError("data must be 'expression' or 'ntr'.")
 
-        X, info, label = self._get_entity_vectors(
-            entity=entity,
-            data=data,
-        )
+        if matrix is not None:
+        #     if not self._is_dataset_matrix_view(matrix):
+        #         raise ValueError("The provided matrix is not a view of the orignal matrix so D:")
+            X, info, label =  matrix.to_np(), matrix.row_info, matrix.row_label
+        else:
+            X, info, label = self._get_entity_vectors(entity=entity,data=data,)
 
         dist_m = distance.pairwise(X)
 
@@ -240,7 +243,20 @@ class ScifateDataset(Dataset):
 
 
 
+    def _is_dataset_matrix_view(self, matrix: LabeledSparseMatrix) -> bool:
+        if matrix is None:
+            return False
 
+        valid_matrices = [
+            self.expression_matrix._matrix,
+            self.expression_matrix.T._matrix
+        ]
+
+        if self.ntr is not None:
+            valid_matrices.append(self.ntr._matrix)
+            valid_matrices.append(self.ntr.T._matrix)
+
+        return any(matrix._matrix is valid_matrix for valid_matrix in valid_matrices)
 
 
 
@@ -494,3 +510,9 @@ class ScifateDataLoader:
             raise FileNotFoundError(f"Trajectories file not found: {trajectories_path}")
 
         return pd.read_csv(trajectories_path, index_col=0)
+    
+    
+    
+    # helper 
+    
+    
