@@ -157,6 +157,84 @@ class LabeledSparseMatrix:
         return np.max(self.col_density())
 
 
+    # mathematical operations #
+
+    def _binary_operation(self, other, op, op_name):
+        if isinstance(other, LabeledSparseMatrix):
+            if self.shape != other.shape:
+                raise ValueError(f"Shape mismatch: {self.shape} != {other.shape}")
+
+            if self.row_info is not None and other.row_info is not None:
+                if not self.row_info.index.equals(other.row_info.index):
+                    raise ValueError("Row indices do not match.")
+
+            if self.col_info is not None and other.col_info is not None:
+                if not self.col_info.index.equals(other.col_info.index):
+                    raise ValueError("Column indices do not match.")
+
+            matrix = op(self.matrix_sparse, other.matrix_sparse)
+            name = f"({self.name}{op_name}{other.name})"
+
+        elif np.isscalar(other):
+            matrix = op(self.matrix_sparse, other)
+            name = f"({self.name}{op_name}{other})"
+
+        else:
+            raise TypeError(f"Unsupported operation with type {type(other)}")
+
+        return LabeledSparseMatrix(
+            matrix=matrix,
+            row_info=self.row_info.copy() if self.row_info is not None else None,
+            col_info=self.col_info.copy() if self.col_info is not None else None,
+            name=name,
+            row_label=self.row_label,
+            col_label=self.col_label,
+        )
+
+
+    def __mul__(self, other):
+        return self._binary_operation(other, lambda a, b: a.multiply(b), "*")
+
+
+    def __add__(self, other):
+        return self._binary_operation(other, lambda a, b: a + b, "+")
+
+
+    def __sub__(self, other):
+        return self._binary_operation(other, lambda a, b: a - b, "-")
+
+
+    def __truediv__(self, other):
+        return self._binary_operation(other, lambda a, b: a / b, "/")
+
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+
+    def __radd__(self, other):
+        return self.__add__(other)
+
+
+    def __rsub__(self, other):
+        return (-1 * self).__add__(other)
+
+
+    def __rtruediv__(self, other):
+        if np.isscalar(other):
+            matrix = other / self.matrix_sparse
+            return LabeledSparseMatrix(
+                matrix=matrix,
+                row_info=self.row_info.copy() if self.row_info is not None else None,
+                col_info=self.col_info.copy() if self.col_info is not None else None,
+                name=f"({other}/{self.name})",
+                row_label=self.row_label,
+                col_label=self.col_label,
+            )
+
+        raise TypeError(f"Unsupported division with type {type(other)}")
+
+
     # selecting rows and cloumns #
     
     def _build_mask(
