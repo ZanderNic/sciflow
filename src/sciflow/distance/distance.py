@@ -1,176 +1,116 @@
 # std lib imports
 import warnings
 
-
-# 3-party import
+# 3-party imports
 import numpy as np
 import scipy
+from scipy.stats import wasserstein_distance, spearmanr
+from sklearn.metrics import pairwise_distances
 from tqdm import tqdm
-from sklearn.metrics.pairwise import cosine_distances
-
-
-# projekt imports
-
 
 class BaseDistance:
-    """
-        Base distance class that will be parent class of all other distances 
-    """
     name = "BaseDistance"
+    metric = None
+    blockwise = False
     supports_sparse = False
-    
+
     
     def __call__(self, x, y):
         return self.distance(x, y)
 
-
     def distance(self, x, y):
-        raise NotImplementedError
+        x = np.asarray(x).reshape(1, -1)
+        y = np.asarray(y).reshape(1, -1)
 
+        return float(pairwise_distances(x, y, metric=self.metric)[0, 0])
 
     def pairwise(self, X):
-        if scipy.sparse.issparse(X):
-            if self.supports_sparse:
-                return self.pairwise_sparse(X)
-
-            X = X.toarray()
-
-        return self.pairwise_dense(X)
-
-
-    def pairwise_dense(self, X):
-        """
-            Normale pariwise distance calculation that will call self.distance(x,y) for every paars of two ponts to build a distance matrix 
-            that will be retunred as np.array. The rows will be interpretet as data points and the columns as features 
-            
-            
-        """
-        
-        X = np.asarray(X, dtype=np.float32)
-        
-        dist_array = np.zeros(shape=[X.shape[0], X.shape[0]], dtype=np.float32)
-        
-        for i in tqdm(range(X.shape[0]), desc=self.name):
-            for j in range(i + 1, X.shape[0]):
-                dist = self.distance(X[i, :], X[j, :])
-                
-                dist_array[i][j] = dist
-                dist_array[j][i] = dist
-
-        return dist_array
-
-
-    def pairwise_sparse(self, X):
-        raise NotImplementedError(
-            f"{self.name} does not implement pairwise_sparse()."
-        )
     
+        if self.blockwise:
+            dist = self.blockwise_pairwise(X)
+        else:
+            if scipy.sparse.issparse(X) and not self.supports_sparse:
+                X = X.toarray()
+            dist = pairwise_distances(X, metric=self.metric)
 
+            dist = np.asarray(dist, dtype=np.float32)
+            dist = (dist + dist.T) / 2
+            np.fill_diagonal(dist, 0.0)
 
+        return dist
+   
+    
+    # blockwise parwise distance calculation 
+    
+    def estimate_block_size(self, n_samples, n_features, dtype=np.float32, max_memory_gb=8.0):
+        bytes_per_value = np.dtype(dtype).itemsize
+        max_bytes = max_memory_gb * 1024**3
+
+        block_size = int(max_bytes / (n_samples * n_features * bytes_per_value))
+
+        return max(1, block_size)
+   
+   
+   
+    def blockwise_pairwise(self, X, block_size: int = None):
+        if block_size is None:
+            block_size = self.estimate_block_size(X.shape[0], X.shape[1], X.dtype)
+
+        n_samples = X.shape[0]
+        dist = np.zeros((n_samples, n_samples), dtype=np.float32)
+
+        for i_start in tqdm(range(0, n_samples, block_size), desc=self.name):
+            i_end = min(i_start + block_size, n_samples)
+
+            for j_start in range(i_start, n_samples, block_size):
+                j_end = min(j_start + block_size, n_samples)
+
+                if scipy.sparse.issparse(X) and not self.supports_sparse:
+                    X_i = X[i_start:i_end, :].toarray()     
+                    X_j = X[j_start:j_end, :].toarray()
+                else:
+                    X_i = X[i_start:i_end, :]  
+                    X_j = X[j_start:j_end, :]
+                    
+                block_dist = pairwise_distances(
+                    X_i,
+                    X_j,
+                    metric=self.metric
+                )
+
+                dist[i_start:i_end, j_start:j_end] = block_dist
+
+                if i_start != j_start:
+                    dist[j_start:j_end, i_start:i_end] = block_dist.T
+
+        np.fill_diagonal(dist, 0.0)
+
+        return dist
+    
 class EuclideanDistance(BaseDistance):
     name = "EuclideanDistance"
+    metric = "euclidean"
+    blockwise = False
     supports_sparse = True
-    
-    def distance(self, x: np.typing.ArrayLike, y: np.typing.ArrayLike) -> float:
-        x = np.asarray(x)
-        y = np.asarray(y)
 
-        return float(np.linalg.norm(x - y))
-
-
-    def pairwise_dense(self, X: np.typing.ArrayLike) -> np.array:
-        """
-            Because we can calculate Euclidean Vectorized we will override base method 
-        
-        """
-        X = np.asarray(X, dtype=np.float32)
-        
-        squared_norms = np.sum(X**2, axis=1, keepdims=True)
-
-        squared_distances = squared_norms + squared_norms.T - 2 * X @ X.T                
-
-        return np.sqrt(np.clip(squared_distances, 0.0, None))
-        
-        
-    def pairwise_sparse(self, X):
-        X = X.tocsr().astype(np.float32)
-
-        squared_norms = np.asarray(X.multiply(X).sum(axis=1))
-
-        gram = X @ X.T
-
-        squared_distances = (
-            squared_norms
-            + squared_norms.T
-            - 2 * gram.toarray()
-        )
-
-        return np.sqrt(np.clip(squared_distances, 0.0, None))
-        
 
 class ManhattanDistance(BaseDistance):
     name = "ManhattanDistance"
-    supports_sparse = False
-    
-    def distance(self, x: np.typing.ArrayLike, y: np.typing.ArrayLike) -> float:
-        x = np.asarray(x)
-        y = np.asarray(y)
+    metric = "manhattan"
+    blockwise = True
+    supports_sparse = True
 
-        return float(np.sum(np.abs(x - y)))
-    
 
 
 class CosineDistance(BaseDistance):
     name = "CosineDistance"
+    metric = "cosine"
+    blockwise = False
     supports_sparse = True
-    
-    def distance(self, x: np.typing.ArrayLike, y: np.typing.ArrayLike) -> float:
-        x = np.asarray(x)
-        y = np.asarray(y)
-
-        numerator = np.dot(x, y)
-        denominator = np.linalg.norm(x) * np.linalg.norm(y)
-
-        if denominator == 0:
-            return 1.0
-
-        cosine_similarity = numerator / denominator
-
-        return float(1.0 - cosine_similarity)
-
-
-    def pairwise_dense(self, X):
-        X = np.asarray(X, dtype=np.float32)
-
-        norms = np.linalg.norm(X, axis=1)
-        norms[norms == 0] = 1.0
-        X_norm = X / norms[:, None]
-
-        similarity = X_norm @ X_norm.T
-
-        return 1.0 - similarity
-
-
-    def pairwise_sparse(self, X):
-        return cosine_distances(X)
 
 
 class CorrelationDistance(BaseDistance):
     name = "CorrelationDistance"
-    
-    def distance(self, x: np.typing.ArrayLike, y: np.typing.ArrayLike) -> float:
-        x = np.asarray(x)
-        y = np.asarray(y)
-
-        x_centered = x - np.mean(x)
-        y_centered = y - np.mean(y)
-
-        numerator = np.dot(x_centered, y_centered)
-        denominator = np.linalg.norm(x_centered) * np.linalg.norm(y_centered)
-
-        if denominator == 0:
-            return 1.0
-
-        correlation = numerator / denominator
-
-        return float(1.0 - correlation)
+    metric = "correlation"
+    blockwise = True
+    supports_sparse = False

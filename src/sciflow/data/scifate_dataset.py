@@ -13,8 +13,6 @@ from sciflow.distance import *
 
 
 
-
-
 class ScifateDataset(Dataset):
     """
     
@@ -77,7 +75,10 @@ class ScifateDataset(Dataset):
         if self.trajectories is None:
             raise ValueError("No trajectories available.")
 
-        return self.trajectories.loc[trajectory_id]
+        trajectory = self.trajectories.loc[trajectory_id]
+        sorted_columns = sorted(trajectory.index,key=lambda x: int(x.replace("h", "")))
+
+        return trajectory[sorted_columns]
     
     
     def get_trajectory_cells(self, trajectory_id):
@@ -126,24 +127,32 @@ class ScifateDataset(Dataset):
     
     #***# distance matrix create #***#***#***#***#***#***#***#***#***#***#***#***#
     
-    def _get_entity_vectors(self, entity: str, data: str):
+    def _get_entity_vectors(
+        self, 
+        entity: str,                            # "cell" | "gene" | "trajectory" 
+        data: str                               # "expression" | "ntr" | "new_rna" | "old_rna"
+    ):
+        
+        if data not in ["expression", "ntr", "new_rna", "old_rna"]:
+            raise ValueError("data must be 'expression', 'ntr', 'new_rna', or 'old_rna'.")
+
+        if data in ["ntr", "new_rna", "old_rna"] and self.ntr is None:
+            raise ValueError("No NTR matrix available.")
+        
+        if data == "expression":
+            matrix = self.expression_matrix
+        elif data == "ntr":
+            matrix = self.ntr
+        elif data == "new_rna":
+            matrix = self.expression_matrix * self.ntr
+        elif data == "old_rna":
+            matrix = self.expression_matrix - (self.expression_matrix * self.ntr)
+            
         if entity == "cell":
-            if data == "expression":
-                return self.expression_matrix.matrix_sparse, self.cell_info, "barcode"
-            if data == "ntr":
-                if self.ntr is None:
-                    raise ValueError("No NTR matrix available.")
-                return self.ntr.matrix_sparse, self.cell_info, "barcode"
-
-        if entity == "gene":
-            if data == "expression":
-                return self.expression_matrix.T.matrix_sparse, self.gene_info, "gene_name"
-            if data == "ntr":
-                if self.ntr is None:
-                    raise ValueError("No NTR matrix available.")
-                return self.ntr.T.matrix_sparse, self.gene_info, "gene_name"
-
-        if entity == "trajectory":
+            return matrix.matrix_sparse, self.cell_info, "barcode"
+        elif entity == "gene":
+            return matrix.T.matrix_sparse, self.gene_info, "gene_name"
+        elif entity == "trajectory":
             if self.trajectories is None:
                 raise ValueError("No trajectories available.")
 
@@ -162,11 +171,10 @@ class ScifateDataset(Dataset):
     def create_distance_matrix(
         self,
         matrix: LabeledSparseMatrix | LabeledDistanceMatrix = None,
-        entity: str = "cell",                                                # "cell" | "gene" | "trajectory"
-        data: str= "expression",                                             # "expression" | "ntr"
+        entity: str = "cell",                                                # "cell" | "gene" | "trajectory" 
+        data: str= "expression",                                             # "expression" | "ntr" | "new_rna" | "old_rna"
         distance: BaseDistance = None,
-        save: bool = True,
-        reduction: str = None,
+        save: bool = True
     ) -> LabeledDistanceMatrix:
         
         if distance is None:
@@ -175,12 +183,12 @@ class ScifateDataset(Dataset):
         if entity not in ["cell", "gene", "trajectory"]:
                 raise ValueError("entity must be 'cell', 'gene', or 'trajectory'.")
 
-        if data not in ["expression", "ntr"]:
-            raise ValueError("data must be 'expression' or 'ntr'.")
+        if data not in ["expression", "ntr", "new_rna", "old_rna"]:
+            raise ValueError("data must be 'expression', 'ntr', 'new_rna' or 'old_rna'.")
 
         if matrix is not None:
         #     if not self._is_dataset_matrix_view(matrix):
-        #         raise ValueError("The provided matrix is not a view of the orignal matrix so D:")
+        #         raise ValueError("The provided matrix is not a view of the orignal matrix")
             X, info, label =  matrix.to_np(), matrix.row_info, matrix.row_label
         else:
             X, info, label = self._get_entity_vectors(entity=entity,data=data,)
@@ -197,6 +205,9 @@ class ScifateDataset(Dataset):
                 "data": data,
                 "distance": distance.name,
             },
+            validate_diagonal=True,
+            validate_square=True,
+            validate_symmetric=True
         )
 
         key = (entity, data, distance.name)

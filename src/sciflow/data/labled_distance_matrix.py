@@ -14,7 +14,7 @@ class LabeledDistanceMatrix(LabeledDenseMatrix):
     """
         Specialized labeled dense matrix for pairwise distances.
 
-        Rows and columns use the same info and labels + the matrix is a square matrix.
+        Rows and columns use the same info and labels + the matrix is a square matrix that is symetrical.
     """
 
     def __init__(
