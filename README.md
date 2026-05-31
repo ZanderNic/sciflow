@@ -1,8 +1,3 @@
-# sciflow
-
-
-
-
-# TODOs
--   implement LabeledSparseMatrix get item 
--   implement LabeledSparseMatrix to np  
+<p align="center">
+  <img src="assets/banner.png" width="100%">
+</p>
