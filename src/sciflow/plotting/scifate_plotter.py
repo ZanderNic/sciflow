@@ -1,8 +1,10 @@
 # std lib imports
 
+
 # 3-party import
 import matplotlib.pyplot as plt
 import seaborn as sns
+import numpy as np
 
 from scipy.spatial.distance import squareform
 from scipy.cluster.hierarchy import linkage
@@ -63,6 +65,8 @@ class ScifatePlotter:
         cluster_cols: bool = False,
         method: str = "average",
         cmap: str = "viridis",
+        n_samples: int = 100,
+        random_state: int = 42,
         figsize=(10, 10)
     ):
         """
@@ -94,25 +98,28 @@ class ScifatePlotter:
         if dist_matrix is None:
             raise ValueError("please provide eather a matrix or a Scifatedataset at initialization and the keys to the distance matrix here")
 
+        if n_samples is not None and n_samples < dist_matrix.matrix.shape[0]:
+            rng = np.random.default_rng(random_state)
+            indices = rng.choice(dist_matrix.matrix.shape[0], size=n_samples, replace=False)
+            dist_matrix = dist_matrix[indices]
+
         matrix = dist_matrix.matrix
 
         row_linkage = None
         col_linkage = None
 
-        # Row clustering
         if cluster_rows:
             condensed_rows = squareform(matrix)
             row_linkage = linkage(condensed_rows, method=method)
 
-        # Column clustering
         if cluster_cols:
             condensed_cols = squareform(matrix)
             col_linkage = linkage(condensed_cols, method=method)
 
         sns.clustermap(
             matrix,
-            row_linkage=None,
-            col_linkage=None,
+            row_linkage=row_linkage,
+            col_linkage=col_linkage,
             row_cluster=cluster_rows,
             col_cluster=cluster_cols,
             cmap=cmap,
