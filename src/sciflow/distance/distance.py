@@ -42,19 +42,7 @@ class BaseDistance:
     
     # blockwise parwise distance calculation 
     
-    def estimate_block_size(self, n_samples, n_features, dtype=np.float32, max_memory_gb=8.0):
-        bytes_per_value = np.dtype(dtype).itemsize
-        max_bytes = max_memory_gb * 1024**3
-
-        block_size = int(max_bytes / (n_samples * n_features * bytes_per_value))
-
-        return max(1, block_size)
-   
-   
-   
-    def blockwise_pairwise(self, X, block_size: int = None):
-        if block_size is None:
-            block_size = self.estimate_block_size(X.shape[0], X.shape[1], X.dtype)
+    def blockwise_pairwise(self, X, block_size: int = 1000):
 
         n_samples = X.shape[0]
         dist = np.zeros((n_samples, n_samples), dtype=np.float32)
@@ -97,7 +85,7 @@ class EuclideanDistance(BaseDistance):
 class ManhattanDistance(BaseDistance):
     name = "ManhattanDistance"
     metric = "manhattan"
-    blockwise = True
+    blockwise = False
     supports_sparse = True
 
 
