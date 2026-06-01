@@ -35,21 +35,34 @@ class ScifatePlotter:
     
     
     def plot_matrix(
-        self, 
+        self,
         matrix: LabeledDenseMatrix | LabeledDistanceMatrix
     ):
         """
-            Plots a Matrix as Heatmap
-        
+            Plot a matrix as a heatmap.
+
+            Parameters
+            ----------
+            matrix : LabeledDenseMatrix | LabeledDistanceMatrix
+                Matrix to visualize.
+
+            Returns
+            -------
+            matplotlib.figure.Figure
+                The created figure.
         """
+
         fig, ax = plt.subplots(figsize=(10, 8))
 
         sns.heatmap(
             matrix.matrix,
             cmap="viridis",
+            ax=ax
         )
 
         ax.set_title(matrix.name)
+
+        fig.tight_layout()
 
         return fig
     
@@ -116,7 +129,7 @@ class ScifatePlotter:
             condensed_cols = squareform(matrix)
             col_linkage = linkage(condensed_cols, method=method)
 
-        sns.clustermap(
+        fig = sns.clustermap(
             matrix,
             row_linkage=row_linkage,
             col_linkage=col_linkage,
@@ -128,4 +141,4 @@ class ScifatePlotter:
             yticklabels=True
         )
 
-        plt.show()
+        return fig
