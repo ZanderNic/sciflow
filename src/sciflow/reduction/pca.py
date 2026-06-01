@@ -20,3 +20,12 @@ class PCA(BaseReduction):
 
     def transform(self, X):
         pass
+
+
+
+    @property
+    def feature_names(self):
+        return [
+            f"PC{i+1}"
+            for i in range(self.n_components)
+        ]

@@ -42,6 +42,8 @@ class RandomProjektions(torch.nn.Module, BaseReduction):
             device=device, dtype=torch.float32
         )  / np.sqrt(feature_dim)
 
+        self.is_fitted = True
+        
 
     def forward(
         self,
@@ -74,7 +76,12 @@ class RandomProjektions(torch.nn.Module, BaseReduction):
 
         return self.forward(X)
 
-
+    @property
+    def feature_names(self):
+        return [
+            f"RP{i+1}"
+            for i in range(self.feature_dim)
+        ]
 
 
 ### helper functions
