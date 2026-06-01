@@ -40,11 +40,7 @@ class LabeledDenseMatrix:
             else np.asarray(row_idx)
         )
 
-        self._col_idx = (
-            np.arange(self._matrix.shape[1])
-            if col_idx is None
-            else np.asarray(col_idx)
-        )
+        self._col_idx = (np.arange(self._matrix.shape[1]) if col_idx is None else np.asarray(col_idx))
 
         self.row_label = row_label
         self.col_label = col_label

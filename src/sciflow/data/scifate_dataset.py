@@ -8,8 +8,9 @@ import pandas as pd
 from scipy.io import mmread
 
 # projekt imports
-from sciflow.data import LabeledSparseMatrix, LabeledDistanceMatrix, Dataset
+from sciflow.data import LabeledSparseMatrix, LabeledDistanceMatrix, Dataset, LabeledDenseMatrix
 from sciflow.distance import *
+from sciflow.reduction.base_reduction import BaseReduction
 
 
 
@@ -39,6 +40,9 @@ class ScifateDataset(Dataset):
         self.ntr = ntr
    
         self.distance_matrices = {}
+        
+        self.reduced_matrices = {}
+        self.reductions = {}
 
 
     #***# @propertys #***#***#***#***#***#***#***#***#***#***#***#***#
@@ -174,6 +178,7 @@ class ScifateDataset(Dataset):
         entity: str = "cell",                                                # "cell" | "gene" | "trajectory" 
         data: str= "expression",                                             # "expression" | "ntr" | "new_rna" | "old_rna"
         distance: BaseDistance = None,
+        reduction: BaseReduction = None,
         save: bool = True
     ) -> LabeledDistanceMatrix:
         
@@ -193,6 +198,9 @@ class ScifateDataset(Dataset):
         else:
             X, info, label = self._get_entity_vectors(entity=entity,data=data,)
 
+        if reduction is not None:
+            X = reduction.fit_transform(X)
+
         dist_m = distance.pairwise(X)
 
         dist_matrix = LabeledDistanceMatrix(
@@ -210,9 +218,8 @@ class ScifateDataset(Dataset):
             validate_symmetric=True
         )
 
-        key = (entity, data, distance.name)
-
         if save:
+            key = (entity, data, distance.name)
             self.distance_matrices[key] = dist_matrix
 
         return dist_matrix
@@ -224,12 +231,80 @@ class ScifateDataset(Dataset):
         data: str,                      #
         distance: BaseDistance,         #
     ) -> LabeledDistanceMatrix:
-        
         return self.distance_matrices[(entity, data, distance.name if isinstance(distance, BaseDistance) else distance)]
     
     
+    #***# data reduction functions #***#***#***#***#***#***#***#***#***#***#***#***#
     
-    #***# info funktions #***#***#***#***#***#***#***#***#***#***#***#***#
+    def create_reduced_matrix(
+        self,
+        reduction: BaseReduction,
+        entity: str,                                                # "cell" | "gene" | "trajectory" 
+        data: str,                                                  # "expression" | "ntr" | "new_rna" | "old_rna"
+        save: bool = True,
+        save_model: bool = True
+    ) -> LabeledDenseMatrix:
+        
+        if entity not in ["cell", "gene", "trajectory"]:
+                raise ValueError("entity must be 'cell', 'gene', or 'trajectory'.")
+
+        if data not in ["expression", "ntr", "new_rna", "old_rna"]:
+            raise ValueError("data must be 'expression', 'ntr', 'new_rna' or 'old_rna'.")
+
+        X, info, label = self._get_entity_vectors(entity=entity, data=data,)
+        X = reduction.fit_transform(X)
+        
+        reduced_matrix = LabeledDenseMatrix(
+            matrix = X,
+            row_info = info,
+            row_label = label,
+            name = f"{entity}_{data}_{reduction.name}",
+            col_info = pd.DataFrame(reduction.feature_names)
+        )
+        
+        if save:
+            key = (entity, data, reduction.name)
+            self.reduced_matrices[key] = reduced_matrix
+        
+        if save_model:
+            key = (entity, data, reduction.name)
+            self.reductions[key] = reduced_matrix
+        
+        return reduced_matrix
+    
+    
+    def get_reduced_matrix(
+        self,
+        entity: str,                    
+        data: str,                      
+        reduction: BaseReduction,         
+    ) -> LabeledDenseMatrix:
+        return self.reduced_matrices[(entity, data, reduction.name if isinstance(reduction, BaseReduction) else distance)]
+    
+    
+    #***# data clustering functions #***#***#***#***#***#***#***#***#***#***#***#***#
+    
+    def create_clusteruing(
+        self,
+        reduction: BaseReduction,
+        entity: str,                                                # "cell" | "gene" | "trajectory" 
+        data: str,                                                  # "expression" | "ntr" | "new_rna" | "old_rna"
+        save: bool = True,
+        save_model: bool = True
+    ) -> LabeledDenseMatrix:
+        pass
+
+
+    def get_reduced_matrix(
+        self,
+        entity: str,                    
+        data: str,                      
+        reduction: BaseReduction,         
+    ) -> LabeledDenseMatrix:
+        return self.reduced_matrices[(entity, data, reduction.name if isinstance(reduction, BaseReduction) else distance)]
+    
+    
+    #***# info functions #***#***#***#***#***#***#***#***#***#***#***#***#
         
     def summary(self):
         n_cells, n_genes = self.data.shape if self.data is not None else (None, None)
