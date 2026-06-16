@@ -5,3 +5,7 @@ tqdm
 torch
 seaborn
 matplotlib
+plotly
+nbformat
+networkx
+python-louvain

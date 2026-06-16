@@ -1,3 +1,9 @@
+# std lib imports
+
+# 3-party import
+import numpy as np
+
+# projekt imports
 
 
 
@@ -16,7 +22,7 @@ class BaseReduction:
     def transform(self, X):
         raise NotImplementedError()
 
-    def fit_transform(self, X):
+    def fit_transform(self, X) -> np.array:
 
         if self.is_fitted:
             return self.transform(X)

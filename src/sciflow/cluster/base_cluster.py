@@ -1,6 +1,7 @@
 # std lib imports
 
 # 3-party import
+import numpy as np
 
 # projekt imports
 
@@ -16,19 +17,19 @@ class BaseCluster:
     def __call__(self, X):
         return self.fit_predict(X)
 
-    def fit(self, X):
+    def fit(self, X: np.array):
         """
         Fit the clustering model.
         """
         raise NotImplementedError()
 
-    def predict(self, X):
+    def predict(self, X: np.array) -> np.array:
         """
         Predict cluster labels for new data.
         """
         raise NotImplementedError()
 
-    def fit_predict(self, X):
+    def fit_predict(self, X: np.array) -> np.array:
         """
         Fit and return cluster labels.
         """

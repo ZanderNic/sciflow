@@ -35,7 +35,8 @@ class Autoencoder(torch.nn.Module, BaseReduction):
         optimizer: str = "adamw",
         batch_size: int = 256,
         epochs: int = 200,
-
+        is_fitted: bool = False,
+        
         device: str = "cuda" if torch.cuda.is_available() else "cpu"
     ):
         super().__init__()
@@ -71,6 +72,7 @@ class Autoencoder(torch.nn.Module, BaseReduction):
         self.sparsity_weight = sparsity_weight
 
         self.device = device
+        self.is_fitted = is_fitted
 
         self.to(self.device)
 
@@ -129,11 +131,6 @@ class Autoencoder(torch.nn.Module, BaseReduction):
 
         self.is_fitted = True
         return self
-              
-                
-    def fit_transform(self, X):
-        self.fit(X)
-        return self.transform(X)
 
 
     def forward(self, X):

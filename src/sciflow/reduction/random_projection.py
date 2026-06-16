@@ -80,7 +80,7 @@ class RandomProjektions(torch.nn.Module, BaseReduction):
     def feature_names(self):
         return [
             f"RP{i+1}"
-            for i in range(self.feature_dim)
+            for i in range(self.dim_)
         ]
 
 
