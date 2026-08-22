@@ -170,51 +170,18 @@ For the complete workflow, including trajectory analysis, distance computation, 
 
 ---
 
-## Visual Tour
 
-The figures below are taken directly from the tutorial notebook. Each one illustrates a different part of the package rather than repeating the same type of visualization.
+<p align="center">
+  <img src="assets/readme/hero_workflow_sciflow.png" width="96%" alt="sciflow workflow overview">
+</p>
 
-<table>
-<tr>
-<td width="50%" align="center">
-  <img src="assets/readme/curse_of_dimensionality.png" width="100%" alt="Curse of dimensionality">
-  <br><strong>Distance concentration in high dimensions</strong><br>
-  <sub>Shows how pairwise-distance variability changes as dimensionality increases.</sub>
-</td>
-<td width="50%" align="center">
-  <img src="assets/readme/trajectory_distance_heatmap.png" width="100%" alt="Trajectory distance heatmap">
-  <br><strong>Trajectory distance structure</strong><br>
-  <sub>Illustrates pairwise relationships between complete trajectory representations.</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center">
-  <img src="assets/readme/graph_based_clustering.png" width="100%" alt="Graph-based clustering">
-  <br><strong>Graph-based clustering</strong><br>
-  <sub>Visualizes neighborhood structure and graph-derived cluster organization.</sub>
-</td>
-<td width="50%" align="center">
-  <img src="assets/readme/cluster_network.png" width="100%" alt="Cluster network">
-  <br><strong>Relationships between clusters</strong><br>
-  <sub>Represents clusters as a network based on distances between cluster representatives.</sub>
-</td>
-</tr>
-<tr>
-<td width="50%" align="center">
-  <img src="assets/readme/pca_explained_variance.png" width="100%" alt="PCA explained variance">
-  <br><strong>PCA explained variance</strong><br>
-  <sub>Provides a compact view of how much variation is retained by successive components.</sub>
-</td>
-<td width="50%" align="center">
-  <img src="assets/readme/pca_clustering_overlap.png" width="100%" alt="Clustering overlap matrix">
-  <br><strong>Workflow comparison</strong><br>
-  <sub>Shows how cluster assignments change before and after dimensionality reduction.</sub>
-</td>
-</tr>
-</table>
+---
 
+<p align="center">
+  <img src="assets/readme/visual_tour_main.png" width="96%" alt="Core visual tour">
+</p>
 
-
+---
 
 ## Package Architecture
 
