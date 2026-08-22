@@ -5,8 +5,8 @@ import shutil
 
 # 3-party imports
 from remotezip import RemoteZip
-
-
+import pandas as pd
+import numpy as np
 
 def download_scifate_files(
     output_dir="../data/ScifateData",
@@ -39,3 +39,18 @@ def download_scifate_files(
                         shutil.copyfileobj(compressed, dst)
 
     print("SciFate files ready.")
+    
+    
+    
+def assignments_to_df(assignments):
+    labels = (
+        assignments["cluster"].to_numpy()
+        if isinstance(assignments, pd.DataFrame)
+        else np.asarray(assignments).ravel()
+    )
+
+    return pd.DataFrame({
+        "id": np.arange(len(labels)),
+        "cluster": labels,
+    })
+    
