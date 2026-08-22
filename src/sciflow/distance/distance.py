@@ -102,3 +102,22 @@ class CorrelationDistance(BaseDistance):
     metric = "correlation"
     blockwise = True
     supports_sparse = False
+
+class SquaredEuclideanDistance(BaseDistance):
+    name = "SquaredEuclideanDistance"
+    metric = "sqeuclidean"
+    blockwise = False
+    supports_sparse = False
+
+class ChebyshevDistance(BaseDistance):
+    name = "ChebyshevDistance"
+    metric = "chebyshev"
+    blockwise = False
+    supports_sparse = False
+
+
+class DiceDistance(BaseDistance):
+    name = "DiceDistance"
+    metric = "dice"
+    blockwise = True
+    supports_sparse = False

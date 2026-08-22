@@ -12,7 +12,7 @@ import pandas as pd
 import scipy
 from scipy.spatial.distance import squareform
 from scipy.cluster.hierarchy import linkage
-
+from plotly.subplots import make_subplots
 import networkx as nx
 
 # projekt imports
@@ -42,7 +42,13 @@ class ScifatePlotter:
     
     def plot_matrix(
         self,
-        matrix: LabeledDenseMatrix | LabeledDistanceMatrix
+        matrix: LabeledDenseMatrix | LabeledDistanceMatrix,
+        figsize=(10, 8),
+        cmap="viridis",
+        annot=True,
+        fmt=None,
+        linewidths=0.5,
+        linecolor="white",
     ):
         """
             Plot a matrix as a heatmap.
@@ -58,20 +64,60 @@ class ScifatePlotter:
                 The created figure.
         """
 
-        fig, ax = plt.subplots(figsize=(10, 8))
+        M = matrix.matrix
+
+        if hasattr(M, "toarray"):
+            M = M.toarray()
+
+        M = np.asarray(M)
+
+        if fmt is None:
+            if np.allclose(M, M.astype(int)):
+                fmt = ".0f"
+            else:
+                fmt = ".2f"
+
+        x_labels = True
+        y_labels = True
+
+        if hasattr(matrix, "col_info") and matrix.col_info is not None:
+            if hasattr(matrix, "col_label") and matrix.col_label in matrix.col_info.columns:
+                x_labels = matrix.col_info[matrix.col_label].astype(str).tolist()
+
+        if hasattr(matrix, "row_info") and matrix.row_info is not None:
+            if hasattr(matrix, "row_label") and matrix.row_label in matrix.row_info.columns:
+                y_labels = matrix.row_info[matrix.row_label].astype(str).tolist()
+
+        if isinstance(matrix, LabeledDistanceMatrix):
+            if hasattr(matrix, "info") and matrix.info is not None:
+                if hasattr(matrix, "label") and matrix.label in matrix.info.columns:
+                    labels = matrix.info[matrix.label].astype(str).tolist()
+                    x_labels = labels
+                    y_labels = labels
+
+        fig, ax = plt.subplots(figsize=figsize)
 
         sns.heatmap(
-            matrix.matrix,
-            cmap="viridis",
-            ax=ax
+            M,
+            cmap=cmap,
+            ax=ax,
+            annot=annot,
+            fmt=fmt,
+            linewidths=linewidths,
+            linecolor=linecolor,
+            xticklabels=x_labels,
+            yticklabels=y_labels,
+            cbar=True,
         )
 
         ax.set_title(matrix.name)
-
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        plt.setp(ax.get_xticklabels(), rotation=45, ha="right")
+        plt.setp(ax.get_yticklabels(), rotation=0)
         fig.tight_layout()
 
         return fig
-    
     
     
     def plot_distance_matrix(
@@ -157,11 +203,13 @@ class ScifatePlotter:
         data: str = None,                                       # "expression" | "ntr" | "new_rna" | "old_rna"                 
         reduction: BaseReduction = None, 
         color_by = None,                                        # None, np.array-like labels, or row_info column name
+        feature: str = None,
+        feature_aggregation: str = "mean",                      # "mean"
         dimensions = (0, 1),
         title: str = None,
         opacity: float = 0.8,
         size: int = 5,
-        max_categories: int = 30
+        continuous: bool = False,
     ):
 
         if self.dataset is not None and entity is not None and data is not None and reduction is not None:
@@ -169,16 +217,8 @@ class ScifatePlotter:
 
         if reduced_matrix is None:
             raise ValueError("please provide either a matrix or a ScifateDataset at initialization and the keys to the reduced matrix here")
-
-        X = reduced_matrix.matrix
-
-        if hasattr(X, "to_numpy"):
-            X = X.to_numpy()
-
-        X = np.asarray(X)
-
-        if X.ndim != 2:
-            raise ValueError(f"reduced_matrix.matrix must be 2D, got shape {X.shape}.")
+        
+        X = reduced_matrix.matrix.to_numpy() if hasattr(reduced_matrix.matrix, "to_numpy") else np.asarray(reduced_matrix.matrix)       # we need this here to handel the costum classes prvided by the package
 
         if len(dimensions) not in [2, 3]:
             raise ValueError("dimensions must contain either 2 or 3 dimensions.")
@@ -186,17 +226,7 @@ class ScifatePlotter:
         if max(dimensions) >= X.shape[1]:
             raise ValueError(f"Requested dimension {max(dimensions)} but matrix only has {X.shape[1]} columns.")
 
-        df = pd.DataFrame()
-
-        x_dim = dimensions[0]
-        y_dim = dimensions[1]
-
-        df["x"] = X[:, x_dim]
-        df["y"] = X[:, y_dim]
-
-        if len(dimensions) == 3:
-            z_dim = dimensions[2]
-            df["z"] = X[:, z_dim]
+        df = pd.DataFrame(X[:, dimensions], columns=dimensions)
 
         hover_cols = []
         row_info = None
@@ -211,75 +241,153 @@ class ScifatePlotter:
 
         color = None
 
-        if color_by is None:
-            color = None
-
-        elif isinstance(color_by, str):
+        if isinstance(color_by, str):                                                                       # here we handel if we color with information that is given in the row_info df 
             if row_info is None:
                 raise ValueError("color_by as string requires reduced_matrix.row_info.")
-
-            if color_by == "trajectory":
-                mapping = self.dataset.get_cell_trajectory_mapping()
-                values = row_info["barcode"].map(mapping)
-                df["trajectory"] = values.astype(str)
-                color = "trajectory"
-
 
             if color_by not in row_info.columns:
                 raise ValueError(f"Column '{color_by}' not found in row_info. Available columns: {list(row_info.columns)}")
 
             values = row_info[color_by].reset_index(drop=True)
-            n_unique = values.nunique(dropna=False)
+            values = values.astype(float if continuous else str)
+            df[color_by] = values
+            color = color_by
 
-            if n_unique > max_categories:
-                df[f"{color_by}_code"] = pd.Categorical(values).codes
-                df[color_by] = values.astype(str)
-                color = f"{color_by}_code"
-
-                if color_by not in hover_cols:
-                    hover_cols.append(color_by)
-
-            else:
-                df[color_by] = values.astype(str)
-                color = color_by
-
-        else:
-            labels = color_by
-
-            if isinstance(labels, LabeledDenseMatrix):
-                labels = labels.matrix
-
-            if hasattr(labels, "to_numpy"):
-                labels = labels.to_numpy()
-
+            if not continuous and color_by not in hover_cols:
+                hover_cols.append(color_by)
+        
+        elif color_by is not None:                                                                          # here we have a direct mapping of colors to points in the form of for example a np array 
+            labels = color_by.matrix if isinstance(color_by, LabeledDenseMatrix) else color_by
+            labels = labels.to_numpy() if hasattr(labels, "to_numpy") else labels
             labels = np.asarray(labels).reshape(-1)
 
-            if len(labels) != X.shape[0]:
-                raise ValueError(f"Number of labels ({len(labels)}) does not match number of points ({X.shape[0]}).")
+            if len(labels) != len(X):
+                raise ValueError("Number of labels must match number of points.")
 
-            n_unique = len(np.unique(labels))
+            labels = labels.astype(float if continuous else str)
 
-            if n_unique > max_categories:
-                df["label_code"] = pd.Categorical(labels).codes
-                df["label"] = labels.astype(str)
-                color = "label_code"
+            df["label"] = labels
+            color = "label"
+        
+        elif isinstance(feature, str):                                                                      # here we handle if the user wants to plot by a feature in the original matrix
+            values = self._get_feature_values(
+                feature=feature,
+                entity=entity,
+                data=data,
+                aggregation= feature_aggregation,
+            )
 
-                if "label" not in hover_cols:
-                    hover_cols.append("label")
-
-            else:
-                df["label"] = labels.astype(str)
-                color = "label"
+            df[feature] = values
+            color = feature
+            continuous = True
 
         plot_title = title if title is not None else reduced_matrix.name
 
         if len(dimensions) == 2:
-            fig = px.scatter(df, x="x", y="y", color=color, hover_data=hover_cols, title=plot_title)
+            fig = px.scatter(df, x = dimensions[0], y=dimensions[1], color=color, hover_data=hover_cols, title=plot_title)
         else:
-            fig = px.scatter_3d(df, x="x", y="y", z="z", color=color, hover_data=hover_cols, title=plot_title)
+            fig = px.scatter_3d(df, x=dimensions[0], y=dimensions[1], z=dimensions[2], color=color, hover_data=hover_cols, title=plot_title)
 
         fig.update_traces(marker=dict(size=size, opacity=opacity))
         fig.update_layout(template="plotly_white")
+
+        return fig
+    
+
+    def plot_reduced_comparison(
+        self,
+        reduced_matrix,
+        compare_matrix=None,
+        color_by=None,
+        compare_color_by=None,
+        feature=None,
+        compare_feature=None,
+        entity=None,
+        data=None,
+        feature_aggregation="mean",
+        dimensions=(0, 1),
+        titles=None,
+        opacity=0.8,
+        size=5,
+        continuous=False,
+    ):
+        """
+            Plot two reduced representations side by side.
+
+            The second plot can use:
+            - another reduced matrix,
+            - another coloring,
+            - another feature,
+            - or any combination of these.
+
+            If no comparison coloring/feature is given, the coloring of the
+            first plot is reused.
+        """
+
+        # use the same matrix if no second matrix is given
+        if compare_matrix is None:
+            compare_matrix = reduced_matrix
+
+        # reuse first coloring if no comparison coloring is specified
+        if compare_color_by is None and compare_feature is None:
+            compare_color_by = color_by
+            compare_feature = feature
+
+        # create both plots using the existing plotting function
+        fig_left = self.plot_reduced_matrix(
+            reduced_matrix=reduced_matrix,
+            entity=entity,
+            data=data,
+            color_by=color_by,
+            feature=feature,
+            feature_aggregation=feature_aggregation,
+            dimensions=dimensions,
+            opacity=opacity,
+            size=size,
+            continuous=continuous,
+        )
+
+        fig_right = self.plot_reduced_matrix(
+            reduced_matrix=compare_matrix,
+            entity=entity,
+            data=data,
+            color_by=compare_color_by,
+            feature=compare_feature,
+            feature_aggregation=feature_aggregation,
+            dimensions=dimensions,
+            opacity=opacity,
+            size=size,
+            continuous=continuous,
+        )
+
+        if titles is None:
+            titles = (
+                reduced_matrix.name,
+                compare_matrix.name,
+            )
+
+        # 2D or 3D subplot type
+        subplot_type = "scene" if len(dimensions) == 3 else "xy"
+
+        fig = make_subplots(
+            rows=1,
+            cols=2,
+            specs=[[{"type": subplot_type}, {"type": subplot_type}]],
+            subplot_titles=titles,
+            horizontal_spacing=0.08,
+        )
+
+        # add traces from both figures
+        for trace in fig_left.data:
+            fig.add_trace(trace, row=1, col=1)
+
+        for trace in fig_right.data:
+            fig.add_trace(trace, row=1, col=2)
+
+        fig.update_layout(
+            template="plotly_white",
+            showlegend=True,
+        )
 
         return fig
     
@@ -288,90 +396,86 @@ class ScifatePlotter:
         self,
         cluster_assignment: pd.DataFrame = None,
         data: str = "expression",
+        representative_aggregation: str = "mean",
+        feature_aggregation: str = "mean",
         genes: list = None,
-        aggregation: str = "mean",
         clustering: BaseCluster = None,
         reduction: BaseReduction = None,
         distance: BaseDistance = None,
         figsize=(10, 6),
     ):
+        """
+            Plot one representative trajectory per cluster over time.
 
-        if aggregation not in ["mean", "sum", "median", "medoid"]:
-            raise ValueError("aggregation must be 'mean', 'sum', 'median', or 'medoid'.")
+            representative_aggregation:
+                How trajectories inside one cluster are summarized.
 
-        if cluster_assignment is None:
-            if clustering is None:
-                raise ValueError("Provide either cluster_assignment or clustering.")
+            feature_aggregation:
+                How genes/features are summarized at each time point for plotting.
+        """
 
-            cluster_assignment = self.dataset.get_cluster_assignment(
-                entity="trajectory",
-                data=data,
-                clustering=clustering,
-                reduction=reduction,
-            )
+        representatives = self.dataset.create_cluster_representatives(
+            cluster_assignment=cluster_assignment,
+            data=data,
+            entity="trajectory",
+            clustering=clustering,
+            reduction=reduction,
+            aggregation=representative_aggregation,
+            distance=distance,
+        )
 
+        X = np.asarray(representatives.matrix)
+        col_info = representatives.col_info.copy().reset_index(drop=True)
 
-        if aggregation == "medoid":
-            cluster_assignment = self.dataset.get_cluster_medoids(
-                entity="trajectory",
-                data=data,
-                clustering=clustering,
-                reduction=reduction,
-                cluster_assignment=cluster_assignment,
-                distance=distance,
-            )
+        if "time" not in col_info.columns:
+            raise ValueError("representatives.col_info must contain a 'time' column. For trajectory representatives, col_info should describe time x gene features.")
 
-            id_col = "medoid_id"
-        else:
-            id_col = "trajectory_id"
+        if genes is not None:
+            if "gene_name" not in col_info.columns:
+                raise ValueError("Filtering by genes requires representatives.col_info to contain a 'gene_name' column.")
+
+            gene_mask = col_info["gene_name"].isin(genes).to_numpy()
+
+            if not gene_mask.any():
+                raise ValueError(f"None of the requested genes were found: {genes}")
+
+            X = X[:, gene_mask]
+            col_info = col_info.loc[gene_mask].reset_index(drop=True)
+
+        time_labels = sorted(
+            col_info["time"].unique(),
+            key=lambda t: int(str(t).replace("h", ""))
+        )
 
         rows = []
 
-        for _, row in cluster_assignment.iterrows():
-            trajectory_id = row[id_col]
+        for i, row in representatives.row_info.iterrows():
             cluster = row["cluster"]
 
-            if data == "expression":
-                matrix = self.dataset.get_trajectory_expression(trajectory_id)
-            elif data == "ntr":
-                matrix = self.dataset.get_trajectory_ntr(trajectory_id)
-            else:
-                raise ValueError("For this compact version use only 'expression' or 'ntr'.")
+            for time in time_labels:
+                time_mask = (col_info["time"] == time).to_numpy()
+                values = X[i, time_mask]
 
-            if genes is not None:
-                matrix = matrix.select_cols(gene_name=genes)
+                value = self._aggregate_feature_values(
+                    values=values,
+                    method=feature_aggregation,
+                )
 
-            X = matrix.to_np()
-
-            if aggregation in ["mean", "medoid"]:
-                values = X.mean(axis=1)
-            elif aggregation == "sum":
-                values = X.sum(axis=1)
-            else:
-                values = np.median(X, axis=1)
-
-            trajectory = self.dataset.get_trajectory(trajectory_id)
-
-            for time, value in zip(trajectory.index, values):
                 rows.append({
-                    "cluster": cluster,
-                    "trajectory_id": trajectory_id,
+                    "cluster": str(cluster),
                     "time": time,
                     "time_num": int(str(time).replace("h", "")),
                     "value": value,
+                    "representative_aggregation": representative_aggregation,
+                    "feature_aggregation": feature_aggregation,
+                    "genes": "all" if genes is None else ", ".join(genes),
                 })
 
-        df = pd.DataFrame(rows)
-
-        if aggregation == "medoid":
-            cluster_time = df.sort_values(["cluster", "time_num"])
-        else:
-            cluster_time = (
-                df.groupby(["cluster", "time", "time_num"])["value"]
-                .mean()
-                .reset_index()
-                .sort_values(["cluster", "time_num"])
-            )
+        cluster_time = (
+            pd.DataFrame(rows)
+            .sort_values(["cluster", "time_num"])
+            .reset_index(drop=True)
+        )
 
         fig = px.line(
             cluster_time,
@@ -379,18 +483,28 @@ class ScifatePlotter:
             y="value",
             color="cluster",
             markers=True,
-            title=f"{aggregation.capitalize()} {data} trajectory per cluster",
-            hover_data=["time"]
+            title=(
+                f"{representative_aggregation.capitalize()} cluster representatives "
+                f"with {feature_aggregation} feature aggregation"
+            ),
+            hover_data=[
+                "time",
+                "genes",
+                "representative_aggregation",
+                "feature_aggregation",
+            ],
         )
 
         fig.update_layout(
             xaxis_title="Time",
-            yaxis_title=f"{aggregation.capitalize()} {data}",
+            yaxis_title=f"{feature_aggregation.capitalize()} {data}",
             template="plotly_white",
             legend_title="Cluster",
+            width=figsize[0] * 100,
+            height=figsize[1] * 100,
         )
 
-        return fig, cluster_time
+        return fig, cluster_time, representatives
     
     
     def plot_cluster_value_distribution(
@@ -403,12 +517,12 @@ class ScifatePlotter:
         log1p: bool = True,
         bins: int = 50,
         n_cols: int = 4,
-        figsize_per_plot=(4, 3),
+        figsize_per_plot=(4, 3)
     ):
         if self.dataset is None:
             raise ValueError("This plot requires a ScifateDataset.")
 
-        X, info, label = self.dataset._get_entity_vectors(
+        X, _, _, _, _ = self.dataset._get_entity_vectors(
             entity=entity,
             data=data,
         )
@@ -592,3 +706,64 @@ class ScifatePlotter:
         fig.tight_layout()
 
         return fig, G
+    
+    
+    
+    
+    ### Helper
+    
+    def _get_feature_values(
+        self,
+        feature,
+        entity,
+        data,
+        aggregation=None,
+    ):
+        X, _, _, col_info, col_label = self.dataset._get_entity_vectors(
+            entity=entity,
+            data=data,
+        )
+
+        if entity == "trajectory" and aggregation is not None:
+            mask = col_info["gene_name"].eq(feature)
+        else:
+            mask = col_info[col_label].eq(feature)
+
+        if not mask.any():
+            raise ValueError(f"Feature '{feature}' not found.")
+
+        values = X[:, mask.to_numpy()]
+
+        if hasattr(values, "toarray"):
+            values = values.toarray()
+
+        values = np.asarray(values)
+
+        if aggregation is not None:
+            return getattr(np, aggregation)(values, axis=1)
+
+        return values[:, 0] if values.shape[1] == 1 else values
+    
+    
+    @staticmethod
+    def _aggregate_feature_values(
+        values,
+        method: str = "mean",
+    ):
+        values = np.asarray(values)
+
+        if method == "mean":
+            return values.mean()
+
+        if method == "median":
+            return np.median(values)
+
+        if method == "sum":
+            return values.sum()
+
+        if method == "max":
+            return values.max()
+
+        raise ValueError(
+            "method must be 'mean', 'median', 'sum', or 'max'."
+        )

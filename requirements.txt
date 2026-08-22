@@ -9,3 +9,5 @@ plotly
 nbformat
 networkx
 python-louvain
+umap-learn
+remotezip

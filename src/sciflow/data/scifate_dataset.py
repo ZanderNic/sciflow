@@ -1,5 +1,6 @@
 # std lib imports
 from pathlib import Path
+from re import I
 from unittest.mock import Base
 import warnings
 from typing import List
@@ -7,13 +8,14 @@ from typing import List
 # 3-party import
 import pandas as pd
 from scipy.io import mmread
+from sklearn.neighbors import NearestNeighbors
 
 # projekt imports
 from sciflow.cluster import BaseCluster
 from sciflow.data import LabeledSparseMatrix, LabeledDistanceMatrix, Dataset, LabeledDenseMatrix
 from sciflow.distance import *
 from sciflow.reduction.base_reduction import BaseReduction
-
+from sciflow.analysis.curse_of_dimensionality import test_distance_concentration
 
 
 class ScifateDataset(Dataset):
@@ -49,6 +51,14 @@ class ScifateDataset(Dataset):
         self.reduced_matrices = {}
         self.reductions = {}
         
+        self.add_trajectory_info()          # this will add to every cell the trajectory that the cell belongs to as index
+        
+        if self.trajectories is not None:
+            self.trajectory_info = pd.DataFrame({"trajectory_id": self.trajectories.index}, index=self.trajectories.index)
+            self.add_trajectory_distance_info()
+        else:
+            self.trajectory_info = None
+        
 
     #***# @propertys #***#***#***#***#***#***#***#***#***#***#***#***#
     @property
@@ -79,15 +89,48 @@ class ScifateDataset(Dataset):
 
         return mask.any(axis=1).idxmax()
     
-    
+    def _time_to_int(self, time):
+        return int(str(time).replace("h", ""))
+
     def get_trajectory(self, trajectory_id):
         if self.trajectories is None:
             raise ValueError("No trajectories available.")
 
         trajectory = self.trajectories.loc[trajectory_id]
-        sorted_columns = sorted(trajectory.index,key=lambda x: int(x.replace("h", "")))
+
+        sorted_columns = sorted(
+            trajectory.index,
+            key=self._time_to_int,
+        )
 
         return trajectory[sorted_columns]
+    
+
+    def _reorder_rows_by_barcodes(
+        self,
+        matrix: LabeledSparseMatrix,
+        barcodes: list,
+    ) -> LabeledSparseMatrix:
+        """
+            Reorder a LabeledSparseMatrix so that its rows follow the given barcode order.
+        """
+
+        row_info = matrix.row_info.reset_index(drop=True)
+
+        barcode_to_position = (
+            row_info
+            .reset_index()
+            .set_index("barcode")["index"]
+        )
+
+        missing = [barcode for barcode in barcodes if barcode not in barcode_to_position.index]
+
+        if len(missing) > 0:
+            raise ValueError(f"Some barcodes are missing in the selected matrix: {missing}")
+
+        positions = barcode_to_position.loc[barcodes].to_numpy()
+
+        return matrix[positions, :]
     
     
     def get_trajectory_cells(self, trajectory_id):
@@ -95,42 +138,112 @@ class ScifateDataset(Dataset):
         return trajectory.dropna().tolist()
     
     
-    def get_trajectory_expression(self, trajectory_id: int = None, barcode: str = None) -> LabeledSparseMatrix:
-        if barcode and trajectory_id is None:
+    def get_trajectory_data(
+        self,
+        trajectory_id: int = None,
+        barcode: str = None,
+        data: str = "expression",
+    ) -> LabeledSparseMatrix:
+        """
+            Return one trajectory as a cell x gene matrix.
+
+            data:
+                "expression" = total RNA / expression matrix
+                "ntr"        = new-to-total ratio
+                "new_rna"    = expression * ntr
+                "old_rna"    = expression - new_rna
+        """
+
+        if self.trajectories is None:
+            raise ValueError("No trajectories available.")
+
+        if data not in ["expression", "ntr", "new_rna", "old_rna"]:
+            raise ValueError("data must be 'expression', 'ntr', 'new_rna', or 'old_rna'")
+
+        if trajectory_id is None:
+            if barcode is None:
+                raise ValueError("Provide either trajectory_id or barcode")
+
             trajectory_id = self.get_trajectory_id(barcode=barcode)
-            
+
         cells = self.get_trajectory_cells(trajectory_id)
-        return self.expression_matrix.select_rows(barcode=cells)
+
+        if data == "expression":
+            matrix = self.expression_matrix.select_rows(barcode=cells)
+            return self._reorder_rows_by_barcodes(matrix, cells)
+
+        if data == "ntr":
+            if self.ntr is None:
+                raise ValueError("No NTR matrix available.")
+
+            matrix = self.ntr.select_rows(barcode=cells)
+            return self._reorder_rows_by_barcodes(matrix, cells)
+
+        if data == "new_rna":
+            if self.ntr is None:
+                raise ValueError("No NTR matrix available.")
+
+            expression = self.expression_matrix.select_rows(barcode=cells)
+            ntr = self.ntr.select_rows(barcode=cells)
+            expression = self._reorder_rows_by_barcodes(expression, cells)
+            ntr = self._reorder_rows_by_barcodes(ntr, cells)
+
+            return expression * ntr
+
+        if data == "old_rna":
+            if self.ntr is None:
+                raise ValueError("No NTR matrix available.")
+
+            expression = self.expression_matrix.select_rows(barcode=cells)
+            ntr = self.ntr.select_rows(barcode=cells)
+            expression = self._reorder_rows_by_barcodes(expression, cells)
+            ntr = self._reorder_rows_by_barcodes(ntr, cells)
+
+            return expression - (expression * ntr)
     
-     
-    def get_trajectory_ntr(self, trajectory_id: int = None, barcode: str = None) -> LabeledSparseMatrix:
-        if self.ntr is None: raise ValueError("No NTR matrix available.")
-        
-        if barcode and trajectory_id is None:
-            trajectory_id = self.get_trajectory_id(barcode=barcode)
-            
-            
-        cells = self.get_trajectory_cells(trajectory_id)
-        return self.ntr.select_rows(barcode=cells)
+
+    def _get_cell_redicton_first_trajectory_vectors(
+        self,
+        data: str,
+        cell_reduction: BaseReduction,
+    ):
+        reduced_matrix = self.create_reduced_matrix(
+            reduction=cell_reduction,
+            entity="cell",
+            data=data,
+            save=False,
+            save_model=False,
+        )
+
+        vectors = []
+
+        for trajectory_id in self.trajectories.index:
+            cells = self.get_trajectory_cells(trajectory_id)
+
+            trajectory_matrix = reduced_matrix.select_rows(
+                barcode=cells
+            )
+
+            vector = trajectory_matrix.to_np().reshape(-1)
+            vectors.append(vector)
+
+        return np.stack(vectors)
     
     
     def _get_trajectory_vectors(
         self,
-        data: str       #  "expression" | "ntr"
+        data: str       # this can be  "expression", "ntr", "new_rna", "old_rna"
     ):
         vectors = []
         for trajectory_id in self.trajectories.index: 
-            trajectory_matrix = None
-            if data == "expression":
-                trajectory_matrix = self.get_trajectory_expression(trajectory_id)
-            elif data == "ntr":
-                trajectory_matrix = self.get_trajectory_ntr(trajectory_id)
+            trajectory_matrix = self.get_trajectory_data(trajectory_id=trajectory_id, data=data)
 
             vector = trajectory_matrix.to_np().reshape(-1)
 
             vectors.append(vector)
 
         return np.stack(vectors)
+    
     
     def get_cell_trajectory_mapping(self):
         if self.trajectories is None:
@@ -146,6 +259,7 @@ class ScifateDataset(Dataset):
 
         return mapping
     
+    
     def add_trajectory_info(self):
         mapping = self.get_cell_trajectory_mapping()
 
@@ -153,6 +267,59 @@ class ScifateDataset(Dataset):
             self.cell_info["barcode"]
             .map(mapping)
         )
+        
+    def add_trajectory_distance_info(self) -> pd.DataFrame:
+        """
+        Calculate trajectory length and start-end distance
+        in the original expression space.
+
+        trajectory_length:
+            Sum of the Euclidean distances between consecutive cells.
+
+        start_end_distance:
+            Euclidean distance between the first and last cell.
+        """
+
+        if self.trajectories is None:
+            raise ValueError("No trajectories available.")
+
+        trajectory_lengths = []
+        start_end_distances = []
+
+        for trajectory_id in self.trajectories.index:
+            trajectory_matrix = self.get_trajectory_data(
+                trajectory_id=trajectory_id,
+                data="expression",
+            )
+
+            X = trajectory_matrix.to_np()
+
+            if X.shape[0] < 2:
+                trajectory_length = 0.0
+                start_end_distance = 0.0
+            else:
+                step_vectors = np.diff(X, axis=0)
+
+                step_distances = np.linalg.norm(
+                    step_vectors,
+                    axis=1,
+                )
+
+                trajectory_length = float(
+                    step_distances.sum()
+                )
+
+                start_end_distance = float(
+                    np.linalg.norm(X[-1] - X[0])
+                )
+
+            trajectory_lengths.append(trajectory_length)
+            start_end_distances.append(start_end_distance)
+
+        self.trajectory_info["trajectory_length"] = trajectory_lengths
+        self.trajectory_info["start_end_distance"] = start_end_distances
+
+        return self.trajectory_info
     
     
     #***# distance matrix create #***#***#***#***#***#***#***#***#***#***#***#***#
@@ -182,7 +349,7 @@ class ScifateDataset(Dataset):
         #         raise ValueError("The provided matrix is not a view of the orignal matrix")
             X, info, label =  matrix.to_np(), matrix.row_info, matrix.row_label
         else:
-            X, info, label = self._get_entity_vectors(entity=entity,data=data,)
+            X, info, label, _, _ = self._get_entity_vectors(entity=entity,data=data,)
 
         if reduction is not None:
             X = reduction.fit_transform(X)
@@ -275,7 +442,7 @@ class ScifateDataset(Dataset):
         save: bool = True,
     ) -> pd.DataFrame:
 
-        X, info, label = self._get_entity_vectors(
+        X, info, _,  _, _ = self._get_entity_vectors(
             entity="gene",
             data=data,
         )
@@ -315,7 +482,7 @@ class ScifateDataset(Dataset):
         if data not in ["expression", "ntr", "new_rna", "old_rna"]:
             raise ValueError("data must be 'expression', 'ntr', 'new_rna' or 'old_rna'.")
 
-        X, info, label = self._get_entity_vectors(entity=entity, data=data,)
+        X, info, label, _, _ = self._get_entity_vectors(entity=entity, data=data,)
         X = reduction.fit_transform(X)
         
         reduced_matrix = LabeledDenseMatrix(
@@ -343,7 +510,7 @@ class ScifateDataset(Dataset):
         data: str,                      
         reduction: BaseReduction,         
     ) -> LabeledDenseMatrix:
-        return self.reduced_matrices[(entity, data, reduction.name if isinstance(reduction, BaseReduction) else distance)]
+        return self.reduced_matrices[(entity, data, reduction.name if hasattr(reduction, "name") else reduction)]
     
     
     #***# data clustering functions #***#***#***#***#***#***#***#***#***#***#***#***#
@@ -351,10 +518,11 @@ class ScifateDataset(Dataset):
     def create_clustering(
         self,
         clustering: BaseCluster,
-        entity: str,
-        data: str,
+        entity: str,                                 # this can be "cell" or "gene" or "trajectory"
+        data: str,                                   # this can be "expression" or "ntr" or "new_rna" or "old_rna"
         save: bool = True,
         reduction: BaseReduction = None,
+        cell_reduction: BaseReduction = None,            # this is only valid for entity="trajectory" because it will reduce the cellss bevro concating them as tajectory
     ) -> pd.DataFrame:
 
         if entity not in ["cell", "gene", "trajectory"]:
@@ -363,13 +531,24 @@ class ScifateDataset(Dataset):
         if data not in ["expression", "ntr", "new_rna", "old_rna"]:
             raise ValueError("data must be 'expression', 'ntr', 'new_rna' or 'old_rna'.")
 
-        X, info, label = self._get_entity_vectors(entity=entity, data=data)
+        if cell_reduction is not None and entity != "trajectory":
+            raise ValueError("cell_reduction is only valid for entity='trajectory'.")
 
-        reduction_name = "no_reduction"
+        if cell_reduction is not None and entity == "trajectory":
+            X = self._get_cell_redicton_first_trajectory_vectors(data=data, cell_reduction=cell_reduction)
+            row_info = self.trajectory_info.copy()
+        else:
+        
+            X, row_info, row_label, col_info, col_label = self._get_entity_vectors(
+                entity=entity,
+                data=data,
+            )
 
         if reduction is not None:
             X = reduction.fit_transform(X)
             reduction_name = reduction.name
+        else:
+            reduction_name = None
 
         if isinstance(X, (LabeledDenseMatrix, LabeledSparseMatrix)):
             X = X.matrix
@@ -385,7 +564,7 @@ class ScifateDataset(Dataset):
         assignment = clustering.fit_predict(X)
         assignment = np.asarray(assignment).reshape(-1, 1)
 
-        cluster_df = info.copy()
+        cluster_df = row_info.copy()
         cluster_df["cluster"] = assignment
 
         if save:
@@ -406,114 +585,90 @@ class ScifateDataset(Dataset):
         cluster_name = clustering.name if isinstance(clustering, BaseCluster) else clustering
         return self.cluster_assignments[(entity, data, cluster_name,  reduction_name)]    
         
-    
-    def get_cluster_medoids(
+        
+    def create_cluster_representatives(
         self,
-        entity: str,
-        data: str,
-        clustering: BaseCluster = None, 
-        reduction: BaseReduction = None,
         cluster_assignment: pd.DataFrame = None,
-        distance: BaseDistance = None,
-        save_distance_matrix: bool = True,
-    ) -> pd.DataFrame:
+        data: str = "expression",
+        entity: str = "trajectory",
+        clustering: BaseCluster = None,
+        reduction: BaseReduction = None,
+        aggregation: str = "mean",                          # this can be "mean", "median", "sum", "medoid"
+        distance: BaseDistance = None,                      # this is only needed for aggregation = medioid
+    ) -> LabeledDenseMatrix:
+
+        if aggregation not in ["mean", "median", "sum", "medoid"]:
+            raise ValueError("aggregation must be 'mean', 'median', 'sum', or 'medoid'.")
 
         if distance is None:
             distance = CosineDistance()
 
-        if entity not in ["cell", "gene", "trajectory"]:
-            raise ValueError("entity must be 'cell', 'gene', or 'trajectory'.")
-
-        if data not in ["expression", "ntr", "new_rna", "old_rna"]:
-            raise ValueError("data must be 'expression', 'ntr', 'new_rna' or 'old_rna'.")
-
         if cluster_assignment is None:
-            cluster_assignment = self.get_cluster_assignment(entity, data, clustering, reduction)
+            if clustering is None:
+                raise ValueError("Provide either cluster_assignment or clustering.")
 
-        if "cluster" not in cluster_assignment.columns:
-            raise ValueError("cluster_assignment must contain a 'cluster' column.")
-
-        try:
-            dist_matrix = self.get_distance_matrix(
+            cluster_assignment = self.get_cluster_assignment(
                 entity=entity,
                 data=data,
-                distance=distance,
-            )
-        except KeyError:
-            dist_matrix = self.create_distance_matrix(
-                entity=entity,
-                data=data,
-                distance=distance,
-                save=save_distance_matrix,
+                clustering=clustering,
+                reduction=reduction,
             )
 
-        D = np.asarray(dist_matrix.matrix)
-        info = dist_matrix.info.copy()
+        X, row_info, row_label, col_info, col_label = self._get_entity_vectors(entity=entity, data=data)
 
-        id_column = {"cell": "barcode", "gene": "gene_name", "trajectory": "trajectory_id"}[entity]
+        cluster_assignment = (
+            cluster_assignment
+            .set_index(row_label)
+            .loc[row_info[row_label]]
+            .reset_index()
+        )
 
-        if id_column not in cluster_assignment.columns:
-            raise ValueError(
-                f"cluster_assignment must contain '{id_column}' for entity='{entity}'."
-            )
-
-        if id_column not in info.columns:
-            raise ValueError(
-                f"distance matrix info must contain '{id_column}' for entity='{entity}'."
-            )
-
-        id_to_pos = {value: idx for idx, value in enumerate(info[id_column].values)}
-
+        representatives = []
         rows = []
 
-        for cluster in sorted(cluster_assignment["cluster"].unique()):
-            cluster_df = cluster_assignment[cluster_assignment["cluster"] == cluster]
+        for cluster, group in cluster_assignment.groupby("cluster", sort=True):
+            X_cluster = X[group.index]
 
-            cluster_ids = cluster_df[id_column].values
+            if aggregation == "mean":
+                representative = X_cluster.mean(axis=0)
 
-            positions = [
-                id_to_pos[x]
-                for x in cluster_ids
-                if x in id_to_pos
-            ]
+            elif aggregation == "median":
+                representative = np.median(X_cluster, axis=0)
 
-            if len(positions) == 0:
-                continue
+            elif aggregation == "sum":
+                representative = X_cluster.sum(axis=0)
 
-            if len(positions) == 1:
-                medoid_pos = positions[0]
-                mean_distance = 0.0
+            elif aggregation == "medoid":
+                if len(X_cluster) == 1:
+                    representative = X_cluster[0]
+                else:
+                    D = distance.pairwise(X_cluster)
+                    np.fill_diagonal(D, np.nan)
 
-            else:
-                D_cluster = D[np.ix_(positions, positions)]
+                    mean_distances = np.nanmean(D, axis=1)
+                    medoid_idx = np.nanargmin(mean_distances)
 
-                D_no_diag = np.where(
-                    np.eye(D_cluster.shape[0], dtype=bool),
-                    np.nan,
-                    D_cluster
-                )
+                    representative = X_cluster[medoid_idx]
 
-                mean_distances = np.nanmean(D_no_diag, axis=1)
+            representatives.append(representative)
 
-                local_medoid_idx = int(np.nanargmin(mean_distances))
-                medoid_pos = positions[local_medoid_idx]
-                mean_distance = mean_distances[local_medoid_idx]
-
-            medoid_info = info.iloc[medoid_pos].to_dict()
-
-            row = {
+            rows.append({
                 "cluster": cluster,
-                "cluster_size": len(positions),
-                "medoid_index": medoid_pos,
-                "medoid_id": info.iloc[medoid_pos][id_column],
-                "mean_distance_to_cluster": mean_distance,
-            }
+                "cluster_size": len(group),
+                "aggregation": aggregation,
+            })
 
-            row.update(medoid_info)
-            rows.append(row)
+        representatives = np.vstack(representatives)
 
-        return pd.DataFrame(rows)
-        
+        return LabeledDenseMatrix(
+            matrix=representatives,
+            row_info=pd.DataFrame(rows),
+            row_label="cluster",
+            col_info=col_info,
+            col_label=col_label,
+            name=f"{entity}_{data}_{aggregation}_cluster_representatives"
+        )
+    
     
     def cluster_distance_matrix(
         self,
@@ -691,6 +846,66 @@ class ScifateDataset(Dataset):
         return cluster_matrix
     
     
+    #***# knn graph functions #***#***#***#***#***#***#***#***#***#***#***#***#
+    
+    def compute_knn_graph(
+        self,
+        entity: str ="cell",
+        data: str = "expression",
+        metric: str = "cosine",
+        reduction: BaseReduction = None,
+        n_neighbors: int = 30,
+    ):
+
+        X, _, _, _, _ = self._get_entity_vectors(
+            entity=entity,
+            data=data,
+        )
+        
+        if reduction is not None:
+            X = reduction.fit_transform(X)
+
+        knn_model = NearestNeighbors(
+            n_neighbors=n_neighbors,
+            metric=metric,
+            algorithm="brute",
+        )
+
+        knn_model.fit(X)
+        knn_distances, knn_indices = knn_model.kneighbors(X, return_distance=True)
+
+        knn_indices = knn_indices.astype(np.int32)
+        knn_distances = knn_distances.astype(np.float32)
+       
+        return knn_indices, knn_distances
+       
+       
+    #***# analytic functions #***#***#***#***#***#***#***#***#***#***#***#***#
+    
+    def test_distance_concentration(
+        self,
+        entity="cell",
+        data="expression",
+        dimensions=None,
+        n_samples=500,
+        metric="cosine",
+        feature_strategy="hvg",
+        random_state=42,
+    ):
+        X, _, _, _, _ = self._get_entity_vectors(
+            entity=entity,
+            data=data,
+        )
+
+        return test_distance_concentration(
+            X=X,
+            dimensions=dimensions,
+            n_samples=n_samples,
+            metric=metric,
+            feature_strategy=feature_strategy,
+            random_state=random_state,
+        )
+    
     #***# info functions #***#***#***#***#***#***#***#***#***#***#***#***#
         
     def summary(self):
@@ -732,52 +947,174 @@ class ScifateDataset(Dataset):
         return any(matrix._matrix is valid_matrix for valid_matrix in valid_matrices)
 
 
+
     def _get_entity_vectors(
-        self, 
-        entity: str,                            # "cell" | "gene" | "trajectory" 
+        self,
+        entity: str,                            # "cell" | "gene" | "trajectory"
         data: str                               # "expression" | "ntr" | "new_rna" | "old_rna"
     ):
-        
+        if entity not in ["cell", "gene", "trajectory"]:
+            raise ValueError("entity must be 'cell', 'gene', or 'trajectory'.")
+
         if data not in ["expression", "ntr", "new_rna", "old_rna"]:
             raise ValueError("data must be 'expression', 'ntr', 'new_rna', or 'old_rna'.")
 
         if data in ["ntr", "new_rna", "old_rna"] and self.ntr is None:
             raise ValueError("No NTR matrix available.")
-        
+
         if data == "expression":
             matrix = self.expression_matrix
+
         elif data == "ntr":
             matrix = self.ntr
+
         elif data == "new_rna":
             matrix = self.expression_matrix * self.ntr
+
         elif data == "old_rna":
             matrix = self.expression_matrix - (self.expression_matrix * self.ntr)
-            
-        if entity == "cell":
-            info = self.cell_info.copy()
-            if (self.trajectories is not None and "trajectory" not in info.columns):
-                info["trajectory"] = info["barcode"].map(self.get_cell_trajectory_mapping())
 
-            return matrix.matrix_sparse, info, "barcode"
-        elif entity == "gene":
-            return matrix.T.matrix_sparse, self.gene_info, "gene_name"
-        elif entity == "trajectory":
+        # Entity = cell rows = cells cols = genes
+        if entity == "cell":
+            row_info = self.cell_info.copy()
+            if self.trajectories is not None and "trajectory" not in row_info.columns:
+                row_info["trajectory"] = row_info["barcode"].map(self.get_cell_trajectory_mapping())
+            row_label = "barcode"
+            col_info = matrix.col_info.copy()
+            col_label = matrix.col_label
+            X = matrix.matrix_sparse
+
+            return X, row_info, row_label, col_info, col_label
+
+        # Entity = gene rows = genes cols = cells  
+        if entity == "gene":
+            row_info = self.gene_info.copy()
+            col_info = self.cell_info.copy()
+
+            if self.trajectories is not None and "trajectory" not in col_info.columns:
+                col_info["trajectory"] = col_info["barcode"].map(
+                    self.get_cell_trajectory_mapping()
+                )
+            col_label = "barcode"
+            row_label = "gene_name"
+            X = matrix.T.matrix_sparse
+            return X, row_info, row_label, col_info, col_label
+
+        # Entity = trajectory  rows = trajectories  cols = timepoint x gene
+        if entity == "trajectory":
             if self.trajectories is None:
                 raise ValueError("No trajectories available.")
 
             X = self._get_trajectory_vectors(data=data)
 
-            trajectory_info = pd.DataFrame(
-                {"trajectory_id": self.trajectories.index},
-                index=self.trajectories.index,
+            row_info  = self.trajectory_info.copy()
+            row_label = "trajectory_id"
+
+            first_trajectory_matrix = self.get_trajectory_data(
+                trajectory_id=self.trajectories.index[0],
+                data=data,
             )
 
-            return X, trajectory_info, "trajectory_id"
+            time_info = first_trajectory_matrix.row_info.reset_index(drop=True)
+            gene_info = first_trajectory_matrix.col_info.reset_index(drop=True)
 
-        raise ValueError(f"Unknown entity: {entity}")
+            col_rows = []
+
+            for time_index, time_row in time_info.iterrows():
+                if "time" in time_row:
+                    time_value = time_row["time"]
+                else:
+                    time_value = time_index
+
+                for gene_index, gene_row in gene_info.iterrows():
+                    col_row = gene_row.to_dict()
+
+                    col_row["time"] = time_value
+                    col_row["time_index"] = time_index
+                    col_row["gene_index"] = gene_index
+
+                    if "gene_name" in col_row:
+                        col_row["feature"] = f"{time_value}_{col_row['gene_name']}"
+                    else:
+                        col_row["feature"] = f"{time_value}_feature_{gene_index}"
+
+                    col_rows.append(col_row)
+
+            col_info = pd.DataFrame(col_rows)
+            col_label = "feature"
+
+            return X, row_info, row_label, col_info, col_label
 
 
+    def preprocess(
+        self,
+        data: str = "expression",
+        num_genes: int | None = None,
+        min_gene_variance: float | None = None,
+        min_cells_per_gene: int | None = None,
+        min_genes_per_cell: int | None = None,
+        name: str | None = None,
+    ):
+        if data not in ["expression", "ntr"]:
+            raise ValueError("data must be 'expression' or 'ntr'.")
 
+        expression = self.expression_matrix
+        ntr = self.ntr
+
+        gene_mask = np.ones(expression.n_cols, dtype=bool)
+        cell_mask = np.ones(expression.n_rows, dtype=bool)
+
+        # filter genes detected in too few cells
+        if min_cells_per_gene is not None:
+            gene_counts = np.asarray((expression.matrix_sparse > 0).sum(axis=0)).ravel()
+            gene_mask &= gene_counts >= min_cells_per_gene
+
+        # filter cells with too few detected genes
+        if min_genes_per_cell is not None:
+            cell_counts = np.asarray((expression.matrix_sparse > 0).sum(axis=1)).ravel()
+            cell_mask &= cell_counts >= min_genes_per_cell
+
+        # filter genes by variance
+        if min_gene_variance is not None or num_genes is not None:
+            gene_scores = self.create_gene_variability_scores(
+                data=data,
+                sort_by="variance",
+                ascending=False,
+                save=False,
+            )
+
+            if min_gene_variance is not None:
+                selected_genes = set(
+                    gene_scores.loc[gene_scores["variance"] >= min_gene_variance, "gene_id"]
+                )
+                gene_mask &= expression.col_info["gene_id"].isin(selected_genes).to_numpy()
+
+            if num_genes is not None:
+                selected_genes = set(gene_scores.head(num_genes)["gene_id"])
+                gene_mask &= expression.col_info["gene_id"].isin(selected_genes).to_numpy()
+
+        new_expression = expression[cell_mask, :][:, gene_mask]
+
+        new_ntr = None
+        if ntr is not None:
+            new_ntr = ntr[cell_mask, :][:, gene_mask]
+
+        new_cell_info = new_expression.row_info.copy()
+        new_gene_info = new_expression.col_info.copy()
+
+        new_trajectories = self.trajectories
+        if new_trajectories is not None:
+            valid_barcodes = set(new_cell_info["barcode"])
+            new_trajectories = new_trajectories.where(new_trajectories.isin(valid_barcodes))
+
+        return ScifateDataset(
+            data=new_expression,
+            ntr=new_ntr,
+            cell_info=new_cell_info,
+            gene_info=new_gene_info,
+            name=name if name is not None else f"{self.name}_preprocessed",
+            trajectories=new_trajectories,
+        )
 
 
 
