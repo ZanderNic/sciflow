@@ -14,17 +14,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/Focus-Single--Cell%20Analysis-2E8B57" alt="Single-cell analysis">
-  <img src="https://img.shields.io/badge/Tutorial-Sci--fate-E67E22" alt="Sci-fate tutorial">
   <img src="https://img.shields.io/badge/Workflow-Modular-6C63FF" alt="Modular workflows">
-</p>
-
-<p align="center">
-  <a href="#overview"><strong>Overview</strong></a> ·
-  <a href="#core-capabilities"><strong>Capabilities</strong></a> ·
-  <a href="#installation"><strong>Installation</strong></a> ·
-  <a href="#quick-start"><strong>Quick Start</strong></a> ·
-  <a href="#visual-tour"><strong>Visual Tour</strong></a> ·
-  <a href="#tutorial"><strong>Tutorial</strong></a>
 </p>
 
 ---
