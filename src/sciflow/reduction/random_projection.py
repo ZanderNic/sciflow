@@ -12,7 +12,6 @@ import scipy
 from sciflow.reduction import BaseReduction 
 
 
-
 class RandomProjektions(torch.nn.Module, BaseReduction):
     """
         A non trainable Module that is based on the paper "Near-Optimal Signal Recovery From Random Projections: Universal Encoding Strategies?" from Emmanuel J. Candes
@@ -22,28 +21,42 @@ class RandomProjektions(torch.nn.Module, BaseReduction):
     """
     name = "RandomProjection"
     
-    
+
     def __init__(
         self,
-        data_dim: int, 
+        data_dim: int,
         feature_dim: int,
-        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+        random_state: int | None = 42,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu",
     ):
         """
             Here we init our sensing matrix M with gaussian random variables and the dim of  data_dim x feature_dim so we can multiply our data vector to it and get the 
             not exact but goof enoth feature dim representation of our input dim. 
         """
         super().__init__()
+
         self.dim_ = feature_dim
-        self.device = device 
-        
-        self.sensing_matrix = torch.randn(
-            (data_dim, feature_dim),
-            device=device, dtype=torch.float32
-        )  / np.sqrt(feature_dim)
+        self.device = device
+        self.random_state = random_state
+
+        generator = None
+
+        if random_state is not None:
+            generator = torch.Generator(device=device)
+            generator.manual_seed(random_state)
+
+        self.sensing_matrix = (
+            torch.randn(
+                (data_dim, feature_dim),
+                generator=generator,
+                device=device,
+                dtype=torch.float32,
+            )
+            / np.sqrt(feature_dim)
+        )
 
         self.is_fitted = True
-        
+
 
     def forward(
         self,

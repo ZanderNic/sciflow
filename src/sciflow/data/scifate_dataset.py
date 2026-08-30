@@ -1,7 +1,5 @@
 # std lib imports
 from pathlib import Path
-from re import I
-from unittest.mock import Base
 import warnings
 from typing import List
 
@@ -51,11 +49,10 @@ class ScifateDataset(Dataset):
         self.reduced_matrices = {}
         self.reductions = {}
         
-        self.add_trajectory_info()          # this will add to every cell the trajectory that the cell belongs to as index
-        
         if self.trajectories is not None:
             self.trajectory_info = pd.DataFrame({"trajectory_id": self.trajectories.index}, index=self.trajectories.index)
             self.add_trajectory_distance_info()
+            self.add_trajectory_info()          # this will add to every cell the trajectory that the cell belongs to as index
         else:
             self.trajectory_info = None
         
@@ -202,7 +199,34 @@ class ScifateDataset(Dataset):
             return expression - (expression * ntr)
     
 
-    def _get_cell_redicton_first_trajectory_vectors(
+    # def _get_cell_redicton_first_trajectory_vectors(
+    #     self,
+    #     data: str,
+    #     cell_reduction: BaseReduction,
+    # ):
+    #     reduced_matrix = self.create_reduced_matrix(
+    #         reduction=cell_reduction,
+    #         entity="cell",
+    #         data=data,
+    #         save=False,
+    #         save_model=False,
+    #     )
+
+    #     vectors = []
+
+    #     for trajectory_id in self.trajectories.index:
+    #         cells = self.get_trajectory_cells(trajectory_id)
+
+    #         trajectory_matrix = reduced_matrix.select_rows(
+    #             barcode=cells
+    #         )
+
+    #         vector = trajectory_matrix.to_np().reshape(-1)
+    #         vectors.append(vector)
+
+    #     return np.stack(vectors)
+    
+    def _get_cell_reduction_first_trajectory_vectors(
         self,
         data: str,
         cell_reduction: BaseReduction,
@@ -220,9 +244,8 @@ class ScifateDataset(Dataset):
         for trajectory_id in self.trajectories.index:
             cells = self.get_trajectory_cells(trajectory_id)
 
-            trajectory_matrix = reduced_matrix.select_rows(
-                barcode=cells
-            )
+            trajectory_matrix = reduced_matrix.select_rows(barcode=cells)
+            trajectory_matrix = self._reorder_rows_by_barcodes(trajectory_matrix, cells)
 
             vector = trajectory_matrix.to_np().reshape(-1)
             vectors.append(vector)
@@ -499,7 +522,7 @@ class ScifateDataset(Dataset):
         
         if save_model:
             key = (entity, data, reduction.name)
-            self.reductions[key] = reduced_matrix
+            self.reductions[key] = reduction
         
         return reduced_matrix
     
@@ -581,7 +604,7 @@ class ScifateDataset(Dataset):
         clustering: BaseCluster,                      
         reduction: BaseReduction = None,         
     ) -> LabeledDenseMatrix:
-        reduction_name =  reduction.name if isinstance(reduction, BaseReduction) else (reduction if isinstance(reduction, str) else "no_reduction")
+        reduction_name =  reduction.name if isinstance(reduction, BaseReduction) else (reduction if isinstance(reduction, str) else None)
         cluster_name = clustering.name if isinstance(clustering, BaseCluster) else clustering
         return self.cluster_assignments[(entity, data, cluster_name,  reduction_name)]    
         
@@ -730,7 +753,7 @@ class ScifateDataset(Dataset):
 
 
         clustering_name = clustering.name if isinstance(clustering, BaseCluster) else clustering
-        reduction_name = reduction.name if isinstance(reduction, BaseReduction) else (reduction if reduction is not None else "no_reduction")
+        reduction_name = reduction.name if isinstance(reduction, BaseReduction) else (reduction if reduction is not None else None)
 
         cluster_matrix = LabeledDistanceMatrix(
             matrix=cluster_D,
@@ -826,7 +849,7 @@ class ScifateDataset(Dataset):
         })
 
         clustering_name = clustering.name if isinstance(clustering, BaseCluster) else clustering
-        reduction_name = reduction.name if isinstance(reduction, BaseReduction) else (reduction if reduction is not None else "no_reduction")
+        reduction_name = reduction.name if isinstance(reduction, BaseReduction) else (reduction if reduction is not None else None)
 
         cluster_matrix = LabeledDistanceMatrix(
             matrix=intra_D,

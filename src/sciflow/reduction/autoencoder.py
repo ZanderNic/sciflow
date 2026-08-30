@@ -157,7 +157,7 @@ class Autoencoder(torch.nn.Module, BaseReduction):
         with torch.no_grad():
             encode = self.encode(X)
         
-        return encode
+        return encode.detach().cpu().numpy()
     
     
     def _get_activation(self):
@@ -306,18 +306,25 @@ class Autoencoder(torch.nn.Module, BaseReduction):
 
 
 class SelfAttentionBlock(torch.nn.Module):
-    def __init__(self, dim: int):
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int = 2,
+    ):
         super().__init__()
 
-        self.attention = torch.nn.Sequential(
-            torch.nn.Linear(dim, dim),
-            torch.nn.Sigmoid()
+        self.attention = torch.nn.MultiheadAttention(
+            embed_dim=dim,
+            num_heads=num_heads,
+            batch_first=True
         )
 
+        self.norm = torch.nn.LayerNorm(dim)
+
     def forward(self, x):
-        weights = self.attention(x)
-        return x * weights
-    
+        attention_output, _ = self.attention(x, x, x, need_weights=False)
+
+        return self.norm(x + attention_output)
     
     
 class MatrixDataset(torch.utils.data.Dataset):

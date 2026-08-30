@@ -23,8 +23,8 @@ class HierarchicalClustering(BaseCluster):
     def __init__(
         self,
         k: int,
-        method: str = "average",          # "single", "complete", "average", "ward"
-        metric: BaseDistance = EuclideanDistance(),
+        method: str = "average",                    # "single", "complete", "average", "ward"
+        metric: BaseDistance = "euclidean",
     ):
         self.k = k
         self.method = method

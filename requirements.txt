@@ -12,3 +12,4 @@ python-louvain
 umap-learn
 remotezip
 pyreadr
+scikit-learn

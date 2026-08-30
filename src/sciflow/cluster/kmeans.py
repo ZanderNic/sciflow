@@ -25,7 +25,6 @@ class KMeans(BaseCluster):
         distance: BaseDistance = EuclideanDistance(),
         max_steps: int = 100,
         tol: float = 1e-5,
-        num_fits: int = 1
     ):
         
         if init not in ["forgy", "random_partition", "kmeans++"]:
@@ -42,7 +41,7 @@ class KMeans(BaseCluster):
         self.max_steps = max_steps
         self.means = None
         self.tol = tol
-        self.num_fits = num_fits
+
 
 
     def fit(self, X: np.array):
