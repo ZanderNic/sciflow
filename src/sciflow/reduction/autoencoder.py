@@ -309,7 +309,7 @@ class SelfAttentionBlock(torch.nn.Module):
     def __init__(
         self,
         dim: int,
-        num_heads: int = 2,
+        num_heads: int = 3,
     ):
         super().__init__()
 

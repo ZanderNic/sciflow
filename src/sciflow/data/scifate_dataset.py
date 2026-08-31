@@ -558,7 +558,7 @@ class ScifateDataset(Dataset):
             raise ValueError("cell_reduction is only valid for entity='trajectory'.")
 
         if cell_reduction is not None and entity == "trajectory":
-            X = self._get_cell_redicton_first_trajectory_vectors(data=data, cell_reduction=cell_reduction)
+            X = self._get_cell_reduction_first_trajectory_vectors(data=data, cell_reduction=cell_reduction)
             row_info = self.trajectory_info.copy()
         else:
         
