@@ -25,6 +25,7 @@ class KMeans(BaseCluster):
         distance: BaseDistance = EuclideanDistance(),
         max_steps: int = 100,
         tol: float = 1e-5,
+        random_state: int | None = 42,
     ):
         
         if init not in ["forgy", "random_partition", "kmeans++"]:
@@ -41,14 +42,14 @@ class KMeans(BaseCluster):
         self.max_steps = max_steps
         self.means = None
         self.tol = tol
-
+        self.random_state = random_state
+        
+        self.rng = np.random.default_rng(random_state)
 
 
     def fit(self, X: np.array):
-        """
-        
-        """
-        
+        self.rng = np.random.default_rng(self.random_state)
+         
         if self.optimizer == "lloyd":
             means = self.init_means(X)
             
@@ -58,6 +59,7 @@ class KMeans(BaseCluster):
                 means_new = self.lloyd_update_step(X, assign)
                 
                 if np.allclose(means, means_new, atol=self.tol):
+                    means = means_new
                     break
                 
                 means = means_new
@@ -87,7 +89,6 @@ class KMeans(BaseCluster):
         means = self.init_means(X)
         assign = self.lloyd_assignment_step(X, means)
         means = self.lloyd_update_step(X, assign)
-
 
         for _ in tqdm(range(self.max_steps), desc="hartigan_wong iterations"):
             changed = False
@@ -159,17 +160,17 @@ class KMeans(BaseCluster):
         means = None
         
         if self.init == "forgy":
-            indices = np.random.choice(X.shape[0], size=self.k, replace=False)
+            indices = self.rng.choice(X.shape[0], size=self.k, replace=False)
             means = X[indices]
             
         elif self.init == "random_partition":
-            assign = np.random.randint(0, self.k, size=X.shape[0])
+            assign = self.rng.integers(0, self.k, size=X.shape[0])
             means = self.lloyd_update_step(X, assign)
             
         elif self.init == "kmeans++":
             means = np.empty(shape=(self.k, X.shape[1]), dtype=np.float32)
             
-            idx = np.random.choice(X.shape[0])
+            idx = self.rng.choice(X.shape[0])
             means[0] = X[idx]
             
             for i in range(1, self.k):
@@ -181,7 +182,7 @@ class KMeans(BaseCluster):
                     proba[idx] = np.min(distances) ** 2
                 
                 proba = proba / proba.sum()
-                idx = np.random.choice(X.shape[0], p=proba)
+                idx = self.rng.choice(X.shape[0], p=proba)
                 means[i] = X[idx]
         
         
@@ -233,6 +234,7 @@ class KMeans(BaseCluster):
                 distance=self.distance,
                 max_steps=self.max_steps,
                 tol=self.tol,
+                random_state=self.random_state
             )
 
             model.fit(X)

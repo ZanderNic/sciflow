@@ -20,8 +20,8 @@ class LabeledSparseMatrix:
     def __init__(
         self, 
         matrix: scipy.sparse._csr.csr_matrix, 
-        row_info: pd.DataFrame = None, 
-        col_info: pd.DataFrame = None, 
+        row_info: pd.DataFrame, 
+        col_info: pd.DataFrame, 
         name = None,
         row_idx = None,
         col_idx = None,
@@ -123,7 +123,7 @@ class LabeledSparseMatrix:
     
     @property
     def is_view(self):
-        return len(self._row_idx) == self._matrix.shape[0] or len(self._col_idx) == self._matrix.shape[1]
+        return len(self._row_idx) != self._matrix.shape[0] or len(self._col_idx) != self._matrix.shape[1]
 
     @property
     def T(self):

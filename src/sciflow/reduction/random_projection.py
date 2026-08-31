@@ -87,7 +87,7 @@ class RandomProjektions(torch.nn.Module, BaseReduction):
         if not isinstance(X, torch.Tensor):
             X = torch.tensor(X, dtype=torch.float32, device=self.device)
 
-        return self.forward(X)
+        return self.forward(X).detach().cpu().numpy()
 
     @property
     def feature_names(self):
@@ -151,12 +151,11 @@ def test_random_projection_matrix(
 
         for repeat in range(n_repeats):
 
-            torch.manual_seed(random_state + repeat)
-
             projector = RandomProjektions(
                 data_dim=n_features,
                 feature_dim=dim,
-                device=device
+                device=device,
+                 random_state= 43 + repeat,
             )
 
             X_projected = projector(X_tensor)

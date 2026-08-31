@@ -306,25 +306,31 @@ class Autoencoder(torch.nn.Module, BaseReduction):
 
 
 class SelfAttentionBlock(torch.nn.Module):
-    def __init__(
-        self,
-        dim: int,
-        num_heads: int = 3,
-    ):
+    def __init__(self, n_features: int, embed_dim: int = 4):
         super().__init__()
 
+        self.to_embedding = torch.nn.Linear(1, embed_dim)
+
         self.attention = torch.nn.MultiheadAttention(
-            embed_dim=dim,
-            num_heads=num_heads,
-            batch_first=True
+            embed_dim=embed_dim,
+            num_heads=1,
+            batch_first=True,
         )
 
-        self.norm = torch.nn.LayerNorm(dim)
+        self.to_scalar = torch.nn.Linear(embed_dim, 1)
 
     def forward(self, x):
-        attention_output, _ = self.attention(x, x, x, need_weights=False)
+        x = x.unsqueeze(-1)          
+        x = self.to_embedding(x)
 
-        return self.norm(x + attention_output)
+        x, _ = self.attention(
+            x, x, x,
+            need_weights=False,
+        )
+
+        x = self.to_scalar(x)       
+
+        return x.squeeze(-1)  
     
     
 class MatrixDataset(torch.utils.data.Dataset):
